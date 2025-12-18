@@ -13,7 +13,11 @@ All functionality from the original LED matrix version is preserved and enhanced
 - 🌡️ **BME280 Sensor Integration**: Temperature, humidity, and pressure readings
 - 📡 **WiFi Manager**: Easy setup without hardcoded credentials
 - 🌍 **NTP Time Sync**: Automatic time synchronization with 88 timezone options
-- 🌐 **Web Interface**: Full configuration and monitoring via browser
+- 🌐 **Modern Responsive Web Interface**:
+  - Live-updating clock (refreshes every second)
+  - Dynamic weather icons based on temperature
+  - Mobile/tablet/desktop responsive design
+  - Dark theme with glowing effects
 - 🎨 **Customizable Colors**: 8 LED colors and 8 surround colors (including "Match LED Color")
 - ⚡ **Instant Refresh**: Style and color changes apply immediately
 
@@ -21,12 +25,13 @@ All functionality from the original LED matrix version is preserved and enhanced
 
 ### Realistic LED Style
 The TFT display renders authentic-looking circular LEDs to replicate real MAX7219 hardware:
-- **Circular LED pixels** with customizable colors
+- **Circular LED pixels** with customizable colors (8 color options)
 - **Visible off LEDs** as dark circles (like real hardware)
-- **Customizable surround/bezel colors** (8 options including matching LED color)
+- **Prominent surround/bezel rings** (8 options including matching LED color)
 - **Authentic 4-pixel gap** between matrix rows
-- **Dimmed surrounds** (50% brightness) for subtle appearance
+- **Full-brightness surrounds** for clear color distinction and visibility
 - **Proper color dimming** that preserves hue in RGB565 format
+- **Optimized rendering** with wider bezel rings for better appearance
 
 ### Display Styles
 **Default Style (Fast):**
@@ -260,15 +265,33 @@ Find the IP address from:
 
 ### Web Interface Features
 
-- **Current Time & Environment**: Real-time clock and sensor data
+- **Live Digital Clock Display**:
+  - Large, glowing clock with auto-update every second (no page refresh needed)
+  - Color-coded date display
+  - Modern dark theme with gradient effects
+
+- **Dynamic Environment Dashboard**:
+  - Temperature with weather emoji icons (changes based on actual temp)
+  - Humidity with condition-based icons
+  - Pressure monitoring
+  - Color-coded values with glowing effects
+  - Responsive grid layout
+
 - **Display Style Controls**:
   - Toggle between Default/Realistic styles
   - Select LED color (8 options)
   - Select surround color (8 options including "Match LED Color")
+  - Instant visual feedback on changes
+
 - **Time Format**: Toggle between 12/24 hour format
 - **Settings**: Toggle temperature unit (°C/°F)
 - **Timezone & Time Format**: 88 timezones + 12/24 hour selection
 - **System Info**: IP address, uptime, WiFi reset
+
+- **Responsive Design**:
+  - Adapts to mobile phones, tablets, and desktops
+  - Touch-friendly buttons and controls
+  - Fluid typography that scales with screen size
 
 ## Display Modes
 
@@ -294,12 +317,13 @@ T26C H88%   ← Temperature & Humidity
 
 ### Mode 2: Time + Date
 ```
-10:24 58    ← Time with seconds
+9:24 58     ← Time with seconds (no leading zero)
 18/12/24    ← Date (DD/MM/YY)
 ```
-- Time with seconds on top row
+- Time with seconds on top row (no leading zero for single-digit hours)
 - Date on bottom row
 - Format: DD/MM/YY
+- Consistent hour formatting with Mode 0
 
 ## Time Format
 
@@ -467,10 +491,10 @@ Adjust LED rendering in `main_tft.cpp`:
 // Row gap (4 pixels matches real MAX7219)
 int matrixGap = (y >= 8) ? 4 : 0;
 
-// Circle radii (in drawLEDPixel function)
-if (distSq <= 18) {      // Inner core
-if (distSq <= 42) {      // LED body
-if (distSq <= 58) {      // Surround ring
+// Circle radii (in drawLEDPixel function) - optimized for visibility
+if (distSq <= 18) {      // Inner core (bright)
+if (distSq <= 38) {      // LED body (bright)
+if (distSq <= 62) {      // Surround ring (full brightness, no dimming)
 ```
 
 ### Adjust Color Dimming
@@ -479,8 +503,10 @@ In `dimRGB565()` function:
 ```cpp
 // Dimming factors:
 dimRGB565(color, 0) = 100% brightness
-dimRGB565(color, 1) = 50% brightness  (used for surrounds)
+dimRGB565(color, 1) = 50% brightness  (for secondary elements)
 dimRGB565(color, 7) = 12.5% brightness (used for off LEDs)
+
+// Note: Surrounds now use full brightness for better visibility
 ```
 
 ### Display Rotation
@@ -542,7 +568,48 @@ Reset WiFi settings and restart
 
 ## Changelog
 
-### Version 2.0 (December 2024)
+### Version 2.1 (18 December 2025)
+
+#### Major Web Interface Overhaul
+- 🎨 **Complete UI Redesign**
+  - Modern dark theme with gradient cards and glowing effects
+  - Large live-updating digital clock (auto-refreshes every second)
+  - No page reload needed for time updates
+  - Professional gradient backgrounds and shadows
+
+- 📱 **Fully Responsive Design**
+  - Mobile-first approach with touch-friendly controls
+  - Fluid typography using CSS clamp() for all screen sizes
+  - Adaptive grid layouts for phones, tablets, and desktops
+  - Breakpoints: Mobile (<768px), Tablet (769-1024px), Desktop (>1024px)
+
+- 🌡️ **Dynamic Environment Display**
+  - Temperature-based weather icons (7 levels):
+    * 🔥 Hot (≥30°C), ☀️ Warm (25-29°C), 🌤️ Pleasant (20-24°C)
+    * ⛅ Mild (15-19°C), ☁️ Cool (10-14°C), 🌧️ Cold (5-9°C), ❄️ Freezing (<5°C)
+  - Dynamic humidity icons: 💦 (high), 💧 (normal), 🏜️ (low)
+  - Color-coded sensor values with glowing effects
+  - Responsive card grid with hover animations
+
+- 🎯 **Enhanced LED Rendering**
+  - Fixed surround color visibility (now properly visible and configurable)
+  - Wider, brighter surround ring for better color distinction
+  - Removed excessive dimming for clearer color differentiation
+  - Full 10x10 pixel LED area utilization
+
+#### Display Mode Improvements
+- ⏰ **Consistent Hour Formatting**
+  - Mode 2 (Time+Date) now removes leading zero from single-digit hours
+  - Matches Mode 0 behavior for uniform appearance
+  - Works correctly in both 12-hour and 24-hour formats
+
+#### Performance & UX
+- ⚡ Live time updates via JavaScript fetch API
+- ⚡ Instant visual feedback on all setting changes
+- 🎨 Smooth hover effects and transitions
+- 📐 Centered layouts with max-width containers
+
+### Version 2.0 (early December 2025)
 
 #### Major Features Added
 - ✅ **Realistic LED Display Style**
@@ -595,7 +662,7 @@ Reset WiFi settings and restart
 - 🌐 Added warning for 24-hour mode seconds limitation
 - 🌐 Instant refresh on all style/color changes
 
-### Version 1.0 (November 2024)
+### Version 1.0 (November 2025)
 - Initial TFT refactor from LED matrix version
 - Basic LED simulation with solid blocks
 - Web interface for configuration
@@ -620,7 +687,7 @@ Reset WiFi settings and restart
 - TFT refactor and enhancements by Anthony Clarke
 - Realistic LED rendering inspired by real MAX7219 hardware
 - Based on MAX7219 concepts by Pawel A. Hernik
-- Font data from original LED matrix project
+- Font data & code / idea from original LED matrix project by https://www.youtube.com/@cbm80amiga
 
 ## License
 

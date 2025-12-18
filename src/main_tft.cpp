@@ -4,25 +4,45 @@
  * ESP8266 TFT Matrix Clock - TFT Edition
  * Author: Refactored from LED Matrix version by Anthony Clarke
  * Display: 1.8/2.4/2.8 Inch SPI TFT LCD (ILI9341/ST7789)
- * 
+ *
  * This version simulates the LED matrix appearance on a TFT display
  * All functionality remains identical to the original LED matrix version
- * 
+ *
+ * ======================== CHANGELOG ========================
+ * 18th December 2025:
+ *   - Fixed Mode 2 (Time+Date) to remove leading zero from single-digit hours
+ *   - Completely redesigned web interface with modern dark theme
+ *   - Added large digital clock display with live auto-update (updates every second)
+ *   - Implemented dynamic temperature icons based on actual temperature readings:
+ *     * 🔥 Hot (≥30°C), ☀️ Warm (25-29°C), 🌤️ Pleasant (20-24°C)
+ *     * ⛅ Mild (15-19°C), ☁️ Cool (10-14°C), 🌧️ Cold (5-9°C), ❄️ Freezing (<5°C)
+ *   - Added dynamic humidity icons (💦 high, 💧 normal, 🏜️ low)
+ *   - Enhanced environment display with color-coded values and glowing effects
+ *   - Implemented fully responsive web design for mobile/tablet/desktop
+ *   - Fixed LED surround color rendering - now properly visible and configurable
+ *   - Improved LED pixel rendering with better surround ring visibility
+ *   - Added fluid typography with CSS clamp() for all screen sizes
+ *   - Created responsive grid layout for environment cards
+ *   - Added touch-friendly UI elements and hover effects
+ *
  * =========================== TODO ==========================
  * - Get weather from online API and display on matrix and webpage
  * - Add OTA firmware update capability
- * - Tidy up web interface and combine all configuration into single page
+ * - add mew display modes, like morphing (from @cbmamiga) 
+ * - refactor code for ESP32 compatibility and use of the CYD display - https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display
  * 
+ *
  * ======================== FEATURES ========================
- * - Simulates 4x MAX7219 LED matrix appearance on TFT display
+ * - Simulates 4x2 MAX7219 LED matrix appearance on TFT display
  * - WiFiManager for easy WiFi setup (no hardcoded credentials)
  * - BME280 I2C temperature/pressure/humidity sensor (optional)
  * - Automatic NTP time synchronization with DST support
- * - Web interface for status and configuration
+ * - Modern responsive web interface with live updates
  * - Realistic LED rendering with customizable colors
- * - Display scheduling with configurable on/off times
+ * - Dynamic environment icons based on sensor readings
  * - Multiple timezone support with POSIX TZ strings
  * - Two display styles: Default (blocks) and Realistic (circular LEDs)
+ * - Mobile-responsive design with adaptive layouts
  */
 
 // ======================== LIBRARIES ========================
@@ -433,41 +453,38 @@ void drawLEDPixel(int x, int y, bool lit, int brightness) {
     }
     else {
       // LIT LED: Draw bright circular LED with surround
-      // Optimized with fillRect for borders
-      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, BG_COLOR);
-      
-      // Dim the surround while preserving color hue
-      uint16_t dimSurround = dimRGB565(ledSurroundColor, 1);  // 50% brightness
-      
+      // Fill background with surround color first
+      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, ledSurroundColor);
+
       // Draw from outside in for better circular appearance
-      for (int py = 1; py < 9; py++) {
-        for (int px = 1; px < 9; px++) {
-          int cx = px - 1;
-          int cy = py - 1;
-          int dx = (cx * 2 - 7);
-          int dy = (cy * 2 - 7);
+      for (int py = 0; py < 10; py++) {
+        for (int px = 0; px < 10; px++) {
+          int cx = px;
+          int cy = py;
+          int dx = (cx * 2 - 9);
+          int dy = (cy * 2 - 9);
           int distSq = dx * dx + dy * dy;
-          
+
           uint16_t pixelColor;
-          
-          // Tighter circles for more pronounced round shape
+
+          // Redesigned for better visibility of surround
           if (distSq <= 18) {
             // Bright center (core)
             pixelColor = ledOnColor;
           }
-          else if (distSq <= 42) {
+          else if (distSq <= 38) {
             // Main LED body (still bright)
             pixelColor = ledOnColor;
           }
-          else if (distSq <= 58) {
-            // Surround/bezel ring (dimmed for subtlety)
-            pixelColor = dimSurround;
+          else if (distSq <= 62) {
+            // Surround/bezel ring (use full surround color, not dimmed)
+            pixelColor = ledSurroundColor;
           }
           else {
             // Outside circle: black
-            continue;
+            pixelColor = BG_COLOR;
           }
-          
+
           tft.drawPixel(screenX + px, screenY + py, pixelColor);
         }
       }
@@ -1016,30 +1033,128 @@ void setupWebServer() {
     html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
     html += "<title>TFT LED Clock</title>";
     html += "<style>";
-    html += "body{font-family:Arial,sans-serif;margin:20px;background:#f0f0f0;}";
-    html += ".card{background:white;padding:20px;margin:10px 0;border-radius:5px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}";
-    html += "h1{color:#333;text-align:center;}";
-    html += "h2{color:#666;border-bottom:2px solid #4CAF50;padding-bottom:5px;}";
-    html += "button{background:#4CAF50;color:white;border:none;padding:10px 20px;cursor:pointer;border-radius:3px;margin:5px;}";
+    html += "*{box-sizing:border-box;}";
+    html += "body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:15px;background:#1a1a1a;color:#fff;max-width:1200px;margin:0 auto;}";
+    html += ".header{text-align:center;margin-bottom:20px;}";
+    html += "h1{color:#fff;font-size:clamp(20px,5vw,28px);font-weight:600;margin:0 0 30px 0;}";
+    html += ".time-display{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(20px,5vw,40px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;}";
+    html += ".time-display h2{color:#aaa;font-size:clamp(16px,4vw,20px);font-weight:400;margin:0 0 15px 0;text-align:left;}";
+    html += ".clock{font-size:clamp(48px,15vw,120px);font-weight:700;text-align:center;margin:15px 0;font-family:'Courier New',monospace;color:#7CFC00;text-shadow:0 0 30px rgba(124,252,0,0.5);line-height:1.1;}";
+    html += ".date{font-size:clamp(24px,7vw,48px);font-weight:600;text-align:center;margin:15px 0;font-family:'Courier New',monospace;color:#4A90E2;text-shadow:0 0 20px rgba(74,144,226,0.5);line-height:1.2;}";
+    html += ".environment{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(20px,4vw,40px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;}";
+    html += ".environment p{margin:10px 0;}";
+    html += ".env-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:clamp(15px,3vw,30px);text-align:center;}";
+    html += ".env-item{padding:clamp(15px,3vw,20px);background:rgba(255,255,255,0.05);border-radius:10px;transition:transform 0.2s;}";
+    html += ".env-item:hover{transform:translateY(-5px);background:rgba(255,255,255,0.08);}";
+    html += ".env-icon{font-size:clamp(40px,10vw,60px);margin-bottom:8px;display:block;}";
+    html += ".env-value{font-size:clamp(24px,6vw,36px);font-weight:700;margin:8px 0;font-family:'Courier New',monospace;line-height:1.2;}";
+    html += ".env-label{font-size:clamp(12px,3vw,16px);color:#aaa;text-transform:uppercase;letter-spacing:1px;}";
+    html += ".card{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,3vw,20px);margin:10px 0;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.3);}";
+    html += "h2{color:#aaa;border-bottom:2px solid #4CAF50;padding-bottom:5px;font-size:clamp(16px,4vw,18px);font-weight:500;margin-top:0;}";
+    html += "button{background:#4CAF50;color:white;border:none;padding:10px 15px;cursor:pointer;border-radius:5px;margin:5px;font-size:clamp(12px,3vw,14px);white-space:nowrap;}";
     html += "button:hover{background:#45a049;}";
-    html += "input[type=range]{width:200px;}";
-    html += "select{padding:5px;font-size:14px;}";
+    html += "select{padding:8px;font-size:clamp(12px,3vw,14px);background:#1e1e1e;color:#fff;border:1px solid #444;border-radius:5px;width:100%;max-width:300px;}";
+    html += "p{color:#ccc;font-size:clamp(13px,3vw,15px);line-height:1.6;}";
+    html += "@media(max-width:768px){";
+    html += ".env-grid{grid-template-columns:1fr;}";
+    html += ".clock{font-size:clamp(40px,12vw,80px);}";
+    html += ".date{font-size:clamp(20px,6vw,36px);}";
+    html += "body{padding:10px;}";
+    html += ".time-display,.environment,.card{padding:15px;}";
+    html += "}";
+    html += "@media(min-width:769px) and (max-width:1024px){";
+    html += ".env-grid{grid-template-columns:repeat(3,1fr);}";
+    html += "}";
     html += "</style>";
+    html += "<script>";
+    html += "function updateTime(){";
+    html += "fetch('/api/time')";
+    html += ".then(function(r){return r.json();})";
+    html += ".then(function(d){";
+    html += "var clock=document.getElementById('clock');";
+    html += "var date=document.getElementById('date');";
+    html += "if(clock){clock.textContent=d.hours+':'+(d.minutes<10?'0':'')+d.minutes+':'+(d.seconds<10?'0':'')+d.seconds;}";
+    html += "if(date){date.textContent=(d.day<10?'0':'')+d.day+'/'+(d.month<10?'0':'')+d.month+'/'+d.year;}";
+    html += "})";
+    html += ".catch(function(e){console.log('Update failed:',e);});";
+    html += "}";
+    html += "setInterval(updateTime,1000);";
+    html += "setTimeout(updateTime,100);";
+    html += "</script>";
     html += "</head><body>";
-    html += "<h1>🎨 TFT LED Matrix Clock</h1>";
-    
-    html += "<div class='card'><h2>Current Time</h2>";
-    html += "<p>Time: " + String(hours) + ":" + (minutes < 10 ? "0" : "") + String(minutes) + "</p>";
-    html += "<p>Date: " + String(day) + "/" + String(month) + "/" + String(year) + "</p>";
+    html += "<div class='header'><h1>TFT LED Matrix Clock</h1></div>";
+
+    html += "<div class='time-display'>";
+    html += "<h2>Current Time & Environment</h2>";
+    html += "<div class='clock' id='clock'>" + String(hours24) + ":" + String(minutes < 10 ? "0" : "") + String(minutes) + ":" + String(seconds < 10 ? "0" : "") + String(seconds) + "</div>";
+    html += "<div class='date' id='date'>" + String(day < 10 ? "0" : "") + String(day) + "/" + String(month < 10 ? "0" : "") + String(month) + "/" + String(year) + "</div>";
     html += "</div>";
-    
+
     if (sensorAvailable) {
       int tempDisplay = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
-      html += "<div class='card'><h2>Environment</h2>";
-      html += "<p>Temperature: " + String(tempDisplay) + (useFahrenheit ? "°F" : "°C") + "</p>";
-      html += "<p>Humidity: " + String(humidity) + "%</p>";
-      html += "<p>Pressure: " + String(pressure) + " hPa</p>";
+
+      // Determine temperature icon based on temperature (Celsius for logic)
+      String tempIcon = "🌡️";
+      String tempColor = "#FFA500";
+      if (temperature >= 30) {
+        tempIcon = "🔥";
+        tempColor = "#FF4444";
+      } else if (temperature >= 25) {
+        tempIcon = "☀️";
+        tempColor = "#FFB347";
+      } else if (temperature >= 20) {
+        tempIcon = "🌤️";
+        tempColor = "#FFD700";
+      } else if (temperature >= 15) {
+        tempIcon = "⛅";
+        tempColor = "#87CEEB";
+      } else if (temperature >= 10) {
+        tempIcon = "☁️";
+        tempColor = "#B0C4DE";
+      } else if (temperature >= 5) {
+        tempIcon = "🌧️";
+        tempColor = "#4682B4";
+      } else {
+        tempIcon = "❄️";
+        tempColor = "#00CED1";
+      }
+
+      // Determine humidity icon and color
+      String humidityIcon = "💧";
+      String humidityColor = "#4A90E2";
+      if (humidity >= 70) {
+        humidityIcon = "💦";
+        humidityColor = "#1E90FF";
+      } else if (humidity <= 30) {
+        humidityIcon = "🏜️";
+        humidityColor = "#DEB887";
+      }
+
+      html += "<div class='environment'>";
+      html += "<div class='env-grid'>";
+
+      // Temperature
+      html += "<div class='env-item'>";
+      html += "<span class='env-icon'>" + tempIcon + "</span>";
+      html += "<div class='env-value' style='color:" + tempColor + ";text-shadow:0 0 20px " + tempColor + "44;'>" + String(tempDisplay) + (useFahrenheit ? "°F" : "°C") + "</div>";
+      html += "<div class='env-label'>Temperature</div>";
       html += "</div>";
+
+      // Humidity
+      html += "<div class='env-item'>";
+      html += "<span class='env-icon'>" + humidityIcon + "</span>";
+      html += "<div class='env-value' style='color:" + humidityColor + ";text-shadow:0 0 20px " + humidityColor + "44;'>" + String(humidity) + "%</div>";
+      html += "<div class='env-label'>Humidity</div>";
+      html += "</div>";
+
+      // Pressure
+      html += "<div class='env-item'>";
+      html += "<span class='env-icon'>🌍</span>";
+      html += "<div class='env-value' style='color:#9370DB;text-shadow:0 0 20px #9370DB44;'>" + String(pressure) + "</div>";
+      html += "<div class='env-label'>Pressure (hPa)</div>";
+      html += "</div>";
+
+      html += "</div></div>";
     }
     
     html += "<div class='card'><h2>Settings</h2>";
