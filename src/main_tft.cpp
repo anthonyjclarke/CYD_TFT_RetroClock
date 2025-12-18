@@ -30,8 +30,8 @@
  *
  * =========================== TODO ==========================
  * - Get weather from online API and display on matrix and webpage
+ * - Move Timezone Definitions to a header file for easier management
  * - Add OTA firmware update capability
- * - Remove this "Sensor: 27°C, 83% RH, 1005 hPa" from Serial Output / redundant
  * - add mew display modes, like morphing (from @cbmamiga) 
  * - refactor code for ESP32 compatibility and use of the CYD display - https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display
  * 
@@ -61,9 +61,9 @@
 
 // ======================== PIN DEFINITIONS ========================
 // TFT Display SPI Pins - Now configured in User_Setup.h for TFT_eSPI
-#define LED_PIN   D8    // TFT Backlight (if applicable)
+#define LED_PIN   D8    // TFT Backlight control
 
-// Sensor and Control Pins (BME280 only)
+// Sensor Pins (BME280 only)
 #define SDA_PIN   D4    // I2C Data (BME280)
 #define SCL_PIN   D3    // I2C Clock (BME280)
 
@@ -106,15 +106,12 @@
 #define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT + 4)  // +4 for authentic row gap
 
 // ======================== TIMING CONFIGURATION ========================
-#define BRIGHTNESS_UPDATE_INTERVAL   5000   // Update brightness every 5s
 #define SENSOR_UPDATE_INTERVAL       60000  // Update sensor every 60s
 #define NTP_SYNC_INTERVAL            3600000 // Sync NTP every hour
 #define STATUS_PRINT_INTERVAL        10000  // Print status every 10s
-#define DISPLAY_MANUAL_OVERRIDE_DURATION 300000 // 5 minutes
 
 // ======================== DEBUG CONFIGURATION ========================
 #define DEBUG_ENABLED 1
-#define ALWAYS_ON_MODE 1  // Display always on (TFT version has no PIR sensor)
 
 // ======================== DISPLAY OPTIMIZATION ========================
 #define BRIGHTNESS_BOOST 1  // Set to 1 for maximum brightness (ignores brightness level)
@@ -157,29 +154,10 @@ int humidity = 0;
 int pressure = 0;
 bool useFahrenheit = false;
 
-// ======================== BRIGHTNESS AND DISPLAY ========================
-int displayTimer = 0;
-int brightness = 8;  // 0-15 scale (converted to 0-255 for TFT backlight)
-unsigned long lastBrightnessUpdate = 0;
+// ======================== TIMING VARIABLES ========================
 unsigned long lastSensorUpdate = 0;
 unsigned long lastNTPSync = 0;
 unsigned long lastStatusPrint = 0;
-
-// Manual brightness override
-bool brightnessManualOverride = false;
-int manualBrightness = 8;
-
-// Display control
-bool displayOn = true;
-bool displayManualOverride = false;
-unsigned long displayManualOverrideTimeout = 0;
-
-// Display schedule (OFF window)
-bool scheduleOffEnabled = true;  // Changed default to ENABLED
-int scheduleOffStartHour = 23;
-int scheduleOffStartMinute = 0;
-int scheduleOffEndHour = 7;
-int scheduleOffEndMinute = 0;
 
 // ======================== DISPLAY STYLE VARIABLES ========================
 int displayStyle = DEFAULT_DISPLAY_STYLE;  // 0=Default, 1=Realistic
@@ -301,6 +279,11 @@ const int numTimezones = sizeof(timezones) / sizeof(timezones[0]);
 void initTFT() {
   DEBUG(Serial.println("Initializing TFT Display..."));
 
+  // Setup backlight pin
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);  // Turn backlight ON
+  DEBUG(Serial.println("Backlight enabled"));
+
   // Add small delay before TFT initialization
   delay(100);
 
@@ -316,9 +299,7 @@ void initTFT() {
   DEBUG(Serial.printf("TFT reports dimensions: %d x %d\n", tft.width(), tft.height()));
 
   tft.fillScreen(BG_COLOR);
-  pinMode(LED_PIN, D8);
-  digitalWrite(LED_PIN, HIGH);
-  
+
   // Calculate display dimensions
   int displayWidth = tft.width();
   int displayHeight = tft.height();
@@ -334,20 +315,6 @@ void initTFT() {
     DEBUG(Serial.println("ERROR: Invalid TFT dimensions!"));
     DEBUG(Serial.println("Check TFT wiring and display type selection"));
   }
-}
-
-void setTFTBrightness(int level) {
-  // Control backlight via LED_PIN
-  // Since LED_PIN is digital (D8), we either turn it full ON or OFF
-  // For actual PWM brightness control, you'd need a PWM-capable pin
-  
-  if (level > 0) {
-    digitalWrite(LED_PIN, HIGH);  // Backlight ON
-  } else {
-    digitalWrite(LED_PIN, LOW);   // Backlight OFF
-  }
-  
-  DEBUG(Serial.printf("TFT Brightness set to %d/15 (Backlight: %s)\n", level, level > 0 ? "ON" : "OFF"));
 }
 
 void clearScreen() {
@@ -379,7 +346,7 @@ void forceCompleteRefresh() {
   clearScreen();
 }
 
-void drawLEDPixel(int x, int y, bool lit, int brightness) {
+void drawLEDPixel(int x, int y, bool lit) {
   // Bounds checking
   if (x < 0 || x >= TOTAL_WIDTH || y < 0 || y >= TOTAL_HEIGHT) {
     return;
@@ -515,7 +482,7 @@ void refreshAll() {
               int displayY = row * 8 + bitPos;  // Calculate actual Y position (0-15)
               bool lit = (pixelByte & (1 << bitPos)) != 0;
               
-              drawLEDPixel(displayX, displayY, lit, brightness);
+              drawLEDPixel(displayX, displayY, lit);
             }
             
         #if FAST_REFRESH
@@ -925,82 +892,19 @@ void updateTime() {
   
   if (seconds != lastSecond) {
     lastSecond = seconds;
-    if (displayOn) {
-      switch (currentMode) {
-        case 0: displayTimeAndTemp(); break;
-        case 1: displayTimeLarge(); break;
-        case 2: displayTimeAndDate(); break;
-      }
-      refreshAll();
+    DEBUG(Serial.printf("Display update - Mode: %d, Time: %02d:%02d:%02d\n", currentMode, hours24, minutes, seconds));
+    switch (currentMode) {
+      case 0: displayTimeAndTemp(); break;
+      case 1: displayTimeLarge(); break;
+      case 2: displayTimeAndDate(); break;
     }
+    refreshAll();
   }
   
   // Auto-switch modes
   if (millis() - lastModeSwitch > MODE_SWITCH_INTERVAL) {
     currentMode = (currentMode + 1) % 3;
     lastModeSwitch = millis();
-  }
-}
-
-// ======================== DISPLAY CONTROL FUNCTIONS ========================
-
-bool isWithinScheduleOffWindow() {
-  if (!scheduleOffEnabled) return false;
-  
-  int nowMinutes = hours24 * 60 + minutes;
-  int startMinutes = scheduleOffStartHour * 60 + scheduleOffStartMinute;
-  int endMinutes = scheduleOffEndHour * 60 + scheduleOffEndMinute;
-  
-  if (startMinutes < endMinutes) {
-    return (nowMinutes >= startMinutes && nowMinutes < endMinutes);
-  } else {
-    return (nowMinutes >= startMinutes || nowMinutes < endMinutes);
-  }
-}
-
-void applyDisplayHardwareState(bool shouldBeOn, int brightnessLevel) {
-  if (shouldBeOn) {
-    setTFTBrightness(brightnessLevel);
-    displayOn = true;
-  } else {
-    setTFTBrightness(0);
-    displayOn = false;
-    clearScreen();
-    refreshAll();
-  }
-}
-
-void handleDisplayControl() {
-  unsigned long now = millis();
-  
-  // Check manual override timeout
-  if (displayManualOverride && now > displayManualOverrideTimeout) {
-    displayManualOverride = false;
-    DEBUG(Serial.println("Display manual override expired"));
-  }
-  
-  // Determine if display should be on
-  bool shouldDisplayBeOn = false;
-  
-  #if ALWAYS_ON_MODE
-    // Always-on mode (TFT version has no motion sensor)
-    shouldDisplayBeOn = true;
-  #else
-    bool withinOffWindow = isWithinScheduleOffWindow();
-    if (displayManualOverride) {
-      shouldDisplayBeOn = displayOn;
-    } else {
-      shouldDisplayBeOn = !withinOffWindow;
-    }
-  #endif
-  
-  // Brightness is always fixed at level 8 (TFT backlight control)
-  int targetBrightness = 8;
-  
-  // Apply state
-  bool stateChanged = (shouldDisplayBeOn != displayOn);
-  if (stateChanged) {
-    applyDisplayHardwareState(shouldDisplayBeOn, targetBrightness);
   }
 }
 
@@ -1215,52 +1119,27 @@ void setupWebServer() {
   
   server.on("/api/status", []() {
     int tempDisplay = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
-    String json = "{\"display\":" + String(displayOn ? "true" : "false") + 
-                  ",\"sensor_available\":" + String(sensorAvailable ? "true" : "false") + 
-                  ",\"temperature\":" + String(tempDisplay) + 
-                  ",\"humidity\":" + String(humidity) + 
-                  ",\"pressure\":" + String(pressure) + 
+    String json = "{\"sensor_available\":" + String(sensorAvailable ? "true" : "false") +
+                  ",\"temperature\":" + String(tempDisplay) +
+                  ",\"humidity\":" + String(humidity) +
+                  ",\"pressure\":" + String(pressure) +
                   ",\"temp_unit\":\"" + String(useFahrenheit ? "Fahrenheit" : "Celsius") + "\"}";
     server.send(200, "application/json", json);
   });
   
-  // Brightness control endpoint
-  server.on("/brightness", []() {
-    if (server.hasArg("mode")) {
-      brightnessManualOverride = !brightnessManualOverride;
-      DEBUG(Serial.printf("Brightness mode: %s\n", brightnessManualOverride ? "Manual" : "Automatic"));
-    }
-    if (server.hasArg("value")) {
-      int newBrightness = server.arg("value").toInt();
-      if (newBrightness >= 1 && newBrightness <= 15) {
-        manualBrightness = newBrightness;
-        if (brightnessManualOverride) {
-          brightness = manualBrightness;
-          if (displayOn) {
-            setTFTBrightness(brightness);
-          }
-        }
-        DEBUG(Serial.printf("Manual brightness set to %d\n", manualBrightness));
-      }
-    }
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "");
-  });
-
   // Temperature unit toggle endpoint
   server.on("/temperature", []() {
     if (server.hasArg("mode")) {
       useFahrenheit = !useFahrenheit;
       DEBUG(Serial.printf("Temperature unit: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
-      
-      if (displayOn) {
-        switch (currentMode) {
-          case 0: displayTimeAndTemp(); break;
-          case 1: displayTimeLarge(); break;
-          case 2: displayTimeAndDate(); break;
-        }
-        refreshAll();
+
+      // Force immediate display update
+      switch (currentMode) {
+        case 0: displayTimeAndTemp(); break;
+        case 1: displayTimeLarge(); break;
+        case 2: displayTimeAndDate(); break;
       }
+      refreshAll();
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
@@ -1285,64 +1164,16 @@ void setupWebServer() {
     if (server.hasArg("mode")) {
       use24HourFormat = !use24HourFormat;
       DEBUG(Serial.printf("Time format changed to: %s\n", use24HourFormat ? "24-Hour" : "12-Hour"));
-      
+
       // Force immediate display update
-      if (displayOn) {
-        forceFullRedraw = true;
-        switch (currentMode) {
-          case 0: displayTimeAndTemp(); break;
-          case 1: displayTimeLarge(); break;
-          case 2: displayTimeAndDate(); break;
-        }
-        refreshAll();
+      forceFullRedraw = true;
+      switch (currentMode) {
+        case 0: displayTimeAndTemp(); break;
+        case 1: displayTimeLarge(); break;
+        case 2: displayTimeAndDate(); break;
       }
+      refreshAll();
     }
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "");
-  });
-  
-  // Display on/off toggle endpoint
-  server.on("/display", []() {
-    if (server.hasArg("mode")) {
-      displayOn = !displayOn;
-      displayManualOverride = true;
-      displayManualOverrideTimeout = millis() + DISPLAY_MANUAL_OVERRIDE_DURATION;
-      
-      if (displayOn) {
-        applyDisplayHardwareState(true, 8);  // Fixed brightness level
-        DEBUG(Serial.printf("Display toggled ON (manual override for 5 minutes)\n"));
-      } else {
-        applyDisplayHardwareState(false, 0);
-        DEBUG(Serial.printf("Display toggled OFF (manual override for 5 minutes)\n"));
-      }
-    }
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "");
-  });
-  
-  // Schedule configuration endpoint
-  server.on("/schedule", []() {
-    if (server.hasArg("enabled")) {
-      scheduleOffEnabled = (server.arg("enabled") == "1");
-    }
-    if (server.hasArg("start_hour")) {
-      scheduleOffStartHour = constrain(server.arg("start_hour").toInt(), 0, 23);
-    }
-    if (server.hasArg("start_min")) {
-      scheduleOffStartMinute = constrain(server.arg("start_min").toInt(), 0, 59);
-    }
-    if (server.hasArg("end_hour")) {
-      scheduleOffEndHour = constrain(server.arg("end_hour").toInt(), 0, 23);
-    }
-    if (server.hasArg("end_min")) {
-      scheduleOffEndMinute = constrain(server.arg("end_min").toInt(), 0, 59);
-    }
-    
-    DEBUG(Serial.printf("Schedule updated - Enabled: %s, OFF: %02d:%02d-%02d:%02d\n",
-                        scheduleOffEnabled ? "Yes" : "No", 
-                        scheduleOffStartHour, scheduleOffStartMinute,
-                        scheduleOffEndHour, scheduleOffEndMinute));
-    
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
@@ -1441,15 +1272,13 @@ void setupWebServer() {
       
       // Immediately trigger display update with new colors
       // This ensures instant visual feedback instead of waiting for next second
-      if (displayOn) {
-        switch (currentMode) {
-          case 0: displayTimeAndTemp(); break;
-          case 1: displayTimeLarge(); break;
-          case 2: displayTimeAndDate(); break;
-        }
-        refreshAll();  // Draw immediately with new colors
+      switch (currentMode) {
+        case 0: displayTimeAndTemp(); break;
+        case 1: displayTimeLarge(); break;
+        case 2: displayTimeAndDate(); break;
       }
-      
+      refreshAll();  // Draw immediately with new colors
+
       DEBUG(Serial.println("Style changed - immediate redraw complete"));
     }
     
@@ -1486,16 +1315,9 @@ void setup() {
   
   // Initialize TFT display
   initTFT();
-  
-  // Setup backlight pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);  // Turn backlight ON
-  
+
   showMessage("INIT");
-  
-  // Display is always on (no motion sensor in TFT version)
-  displayOn = true;
-  
+
   // Test sensor
   sensorAvailable = testSensor();
   if (sensorAvailable) {
@@ -1525,9 +1347,13 @@ void setup() {
   setupWebServer();
   showMessage("READY");
   delay(1000);
-  
+
+  // Initialize display with current time
+  clearScreen();
+  tft.fillScreen(BG_COLOR);
+  updateTime();
+
   lastNTPSync = millis();
-  lastBrightnessUpdate = millis();
   lastSensorUpdate = millis();
   lastStatusPrint = millis();
   lastModeSwitch = millis();
@@ -1542,10 +1368,7 @@ void loop() {
   
   // Update time
   updateTime();
-  
-  // Handle display control (schedule and manual override)
-  handleDisplayControl();
-  
+
   // Update sensor data
   if (sensorAvailable && now - lastSensorUpdate >= SENSOR_UPDATE_INTERVAL) {
     updateSensorData();

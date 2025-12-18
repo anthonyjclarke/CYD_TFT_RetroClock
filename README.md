@@ -71,7 +71,7 @@ The TFT display renders authentic-looking circular LEDs to replicate real MAX721
 
 - Breadboard or PCB
 - Jumper wires
-- 5V power supply (1A minimum)
+- 5V power supply
 
 ## Wiring Diagram
 
@@ -80,18 +80,20 @@ The TFT display renders authentic-looking circular LEDs to replicate real MAX721
 ```
 ESP8266 D1 Mini  →  TFT Display
 ─────────────────────────────────
-D8 (GPIO15)      →  CS  (Chip Select)
-D3 (GPIO0)       →  DC  (Data/Command)
-D4 (GPIO2)       →  RST (Reset)
+D1 (GPIO5)       →  CS  (Chip Select)
+D2 (GPIO4)       →  DC  (Data/Command)
+RST or 3.3V      →  RST (Reset) *
 D7 (GPIO13)      →  MOSI/SDA (Data)
 D5 (GPIO14)      →  SCK/SCL (Clock)
 3.3V             →  VCC
-3.3V             →  LED (Backlight) *
+D8 or 3.3V       →  LED (Backlight) **
 GND              →  GND
 
-* Note: Some TFT modules have built-in backlight control.
-  If your module has a separate LED pin, connect it to 3.3V
-  or to a PWM pin for brightness control.
+* Note: TFT RST pin should be connected to ESP8266 RST pin or 3.3V.
+  Software reset is handled via ESP reset (TFT_RST = -1).
+** Note: Backlight can be controlled via D8 (GPIO15) for software on/off control,
+  or hardwired to 3.3V for always-on operation. The current code uses D8 to turn
+  on the backlight at startup. If hardwired to 3.3V, you can remove LED_PIN code.
 ```
 
 ### BME280 Sensor - I2C Connection
@@ -99,8 +101,8 @@ GND              →  GND
 ```
 ESP8266 D1 Mini  →  BME280
 ────────────────────────────
-D4 (GPIO4)       →  SDA
-D3 (GPIO5)       →  SCL
+D4 (GPIO2)       →  SDA
+D3 (GPIO0)       →  SCL
 3.3V             →  VCC
 GND              →  GND
 ```
@@ -110,27 +112,29 @@ GND              →  GND
 | Component      | Pin Name  | ESP8266 Pin | GPIO | Notes                    |
 |----------------|-----------|-------------|------|--------------------------|
 | **TFT Display**|           |             |      |                          |
-| CS             | TFT_CS    | D8          | 15   | Chip Select              |
-| DC             | TFT_DC    | D3          | 0    | Data/Command             |
-| RST            | TFT_RST   | D4          | 2    | Reset                    |
+| CS             | TFT_CS    | D1          | 5    | Chip Select              |
+| DC             | TFT_DC    | D2          | 4    | Data/Command             |
+| RST            | TFT_RST   | RST/3.3V    | -1   | Connected to ESP RST     |
+| LED            | LED_PIN   | D8/3.3V     | 15   | Backlight (optional D8)  |
 | MOSI           | MOSI      | D7          | 13   | Hardware SPI             |
 | SCK            | SCK       | D5          | 14   | Hardware SPI             |
 | **BME280**     |           |             |      |                          |
-| SDA            | SDA       | D4          | 4    | I2C Data                 |
-| SCL            | SCL       | D3          | 5    | I2C Clock                |
+| SDA            | SDA       | D4          | 2    | I2C Data                 |
+| SCL            | SCL       | D3          | 0    | I2C Clock                |
 
-**Note:** PIR (D0) and LDR (A0) pins are NOT used in TFT version.
+**Note:** PIR and LDR sensors are NOT used in TFT version.
+**Backlight:** Can be controlled via D8 or hardwired to 3.3V for always-on operation.
 
 ## Display Configuration
 
 ### Supported Display Types
 
-The code supports both ILI9341 and ST7789 displays. Choose your display type in `main_tft.cpp`:
+The code uses TFT_eSPI library which is configured via `User_Setup.h`. The default configuration is for ILI9341 displays. To change display type, edit `.pio/libdeps/d1_mini_pro/TFT_eSPI/User_Setup.h` or the copy in `include/User_Setup.h`:
 
 ```cpp
-// Uncomment ONE of the following:
-#define USE_ILI9341    // For ILI9341 displays (most common)
-// #define USE_ST7789  // For ST7789 displays
+// Driver selection (default is ILI9341)
+#define ILI9341_DRIVER      // For ILI9341 displays (most common)
+// #define ST7789_DRIVER    // For ST7789 displays
 ```
 
 ### Display Customization
@@ -197,26 +201,34 @@ git clone <your-repo-url>
 cd tft-led-clock
 ```
 
-### 3. Configure Display Type
+### 3. Configure Display Type (if needed)
 
-Edit `main_tft.cpp` and select your display:
+The default configuration is for ILI9341 displays. If you have a different display, edit `include/User_Setup.h`:
 
 ```cpp
-#define USE_ILI9341    // Most common 2.4" and 2.8" displays
-// #define USE_ST7789  // Some 1.8" and 2.4" displays
+#define ILI9341_DRIVER    // Most common 2.4" and 2.8" displays
+// #define ST7789_DRIVER  // Some 1.8" and 2.4" displays
 ```
+
+After editing, the library's User_Setup.h will be updated automatically during build.
 
 ### 4. Verify Pin Connections
 
-Check that the pin definitions in `main_tft.cpp` match your wiring:
+Pin connections are configured in `include/User_Setup.h`:
 
 ```cpp
-#define TFT_CS    D8
-#define TFT_DC    D3
-#define TFT_RST   D4
-#define SDA_PIN   D4
-#define SCL_PIN   D3
+#define TFT_CS   PIN_D1  // D1 (GPIO5)
+#define TFT_DC   PIN_D2  // D2 (GPIO4)
+#define TFT_RST  -1      // Uses ESP reset (TFT RST connected to ESP RST or 3.3V)
 ```
+
+BME280 sensor pins in `main_tft.cpp`:
+```cpp
+#define SDA_PIN   D4    // GPIO2 - I2C Data
+#define SCL_PIN   D3    // GPIO0 - I2C Clock
+```
+
+**Note:** TFT pins (D1, D2) and BME280 pins (D3, D4) are completely separate - no conflicts.
 
 ### 5. Build and Upload
 
@@ -267,6 +279,7 @@ Find the IP address from:
 
 - **Live Digital Clock Display**:
   - Large, glowing clock with auto-update every second (no page refresh needed)
+  - Respects 12/24 hour format setting (shows AM/PM in 12-hour mode)
   - Color-coded date display
   - Modern dark theme with gradient effects
 
@@ -399,8 +412,9 @@ Changes apply instantly with automatic full screen refresh.
 - Check realistic display settings in code
 
 **Display too dim/bright:**
-- TFT backlight is fixed at level 8
-- Adjust in code if needed: `setTFTBrightness(level)`
+- TFT backlight is controlled via D8 (always on after boot)
+- Can hardwire backlight to 3.3V if D8 control is not needed
+- For PWM brightness control, modify LED_PIN code to use analogWrite()
 
 **Colors don't change/refresh slowly:**
 - Should be instant with latest code
@@ -472,7 +486,7 @@ Syncing time with NTP...
 Time synced: 14:23:45 17/12/2025 (TZ: Sydney, Australia)
 Web server started
 
-Time: 14:23 | Date: 18/12/2024 | Temp: 23°C | Hum: 45%
+Time: 14:23 | Date: 18/12/2024 | Temp: 23°C | Hum: 45% | Pressure: 1013 hPa
 ```
 
 ## Advanced Configuration
@@ -546,10 +560,6 @@ Toggle temperature unit:
 Change timezone:
 - `tz=0-87` - Set timezone index
 
-### GET /display
-Toggle display on/off:
-- `mode=toggle` - Manual display toggle (5-minute override)
-
 ### GET /reset
 Reset WiFi settings and restart
 
@@ -560,20 +570,28 @@ Reset WiFi settings and restart
   - Realistic style: ~3 FPS (300-400ms updates)
 - **Fast Refresh**: Only changed pixels are redrawn
 - **Color Changes**: Instant refresh (forceFullRedraw mechanism)
-- **Power Consumption**: 
-  - Active: ~250mA @ 5V
-  - Display off: ~80mA @ 5V
+- **Power Consumption**:
+  - Active: ~250mA @ 5V (display always on)
 - **WiFi**: 2.4GHz only (ESP8266 limitation)
 - **Memory**: ~40KB RAM used, ~40KB free
 
 ## Changelog
 
-### Version 2.1 (18 December 2025)
+### Version 2.1 (18-19 December 2025)
+
+#### TFT_eSPI Library Migration
+- ⚡ **Migrated to TFT_eSPI Library**
+  - Replaced Adafruit_GFX/Adafruit_ILI9341 with hardware-optimized TFT_eSPI
+  - Configured 40MHz SPI bus speed for faster display updates
+  - Created custom User_Setup.h for ESP8266 D1 Mini Pro configuration
+  - Updated pin assignments: TFT_CS=D1, TFT_DC=D2, TFT_RST=-1
+  - Better performance and active maintenance
 
 #### Major Web Interface Overhaul
 - 🎨 **Complete UI Redesign**
   - Modern dark theme with gradient cards and glowing effects
   - Large live-updating digital clock (auto-refreshes every second)
+  - Clock respects 12/24 hour format (shows AM/PM in 12-hour mode)
   - No page reload needed for time updates
   - Professional gradient backgrounds and shadows
 
@@ -603,11 +621,15 @@ Reset WiFi settings and restart
   - Matches Mode 0 behavior for uniform appearance
   - Works correctly in both 12-hour and 24-hour formats
 
-#### Performance & UX
+#### Performance & UX Improvements
 - ⚡ Live time updates via JavaScript fetch API
 - ⚡ Instant visual feedback on all setting changes
 - 🎨 Smooth hover effects and transitions
 - 📐 Centered layouts with max-width containers
+- 📊 **Enhanced Serial Output**
+  - Added pressure (hPa) to status output
+  - Removed redundant sensor debug output
+  - Cleaner, more informative logging
 
 ### Version 2.0 (early December 2025)
 
