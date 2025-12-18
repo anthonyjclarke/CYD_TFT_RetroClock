@@ -8,30 +8,22 @@
  * This version simulates the LED matrix appearance on a TFT display
  * All functionality remains identical to the original LED matrix version
  * 
- * ======================== FEATURES ========================
- * - Simulates 4x MAX7219 x 2 Rows LED matrix appearance on TFT display
- * - WiFiManager for easy WiFi setup (no hardcoded credentials)
- * - BME280 I2C temperature/pressure/humidity sensor
- * - Automatic NTP time synchronization with DST support
- * - Web interface for status and configuration
- * - Display always on with backlight permanently enabled
- * - Multiple timezone support with POSIX TZ strings
- 
  * =========================== TODO ==========================
- * - Add 12/24 Switch on Web interface
- * - Move TZ selection into header file for easier editing
  * - Get weather from online API and display on matrix and webpage
- * - Implement web interface for full configuration
  * - Add OTA firmware update capability
  * - Tidy up web interface and combine all configuration into single page
  * 
- *
- * ======================== CHANGELOG ========================
- * v1.0 17th December 2025
- *  - Initial TFT version based on LED matrix code
- * 
- * 
-*/
+ * ======================== FEATURES ========================
+ * - Simulates 4x MAX7219 LED matrix appearance on TFT display
+ * - WiFiManager for easy WiFi setup (no hardcoded credentials)
+ * - BME280 I2C temperature/pressure/humidity sensor (optional)
+ * - Automatic NTP time synchronization with DST support
+ * - Web interface for status and configuration
+ * - Realistic LED rendering with customizable colors
+ * - Display scheduling with configurable on/off times
+ * - Multiple timezone support with POSIX TZ strings
+ * - Two display styles: Default (blocks) and Realistic (circular LEDs)
+ */
 
 // ======================== LIBRARIES ========================
 #include <ESP8266WiFi.h>
@@ -59,7 +51,7 @@
 //#define MOSI      D7    // MOSI (hardware SPI)
 //#define SCK       D5    // SCK (hardware SPI)
 
-// Sensor and Control Pins
+// Sensor and Control Pins (BME280 only)
 #define SDA_PIN   D4    // I2C Data (BME280)
 #define SCL_PIN   D3    // I2C Clock (BME280)
 
@@ -78,20 +70,42 @@
 #define BG_COLOR          0x0000 // Black background
 #define LED_OFF_COLOR     0x2000 // Slightly brighter dark red for "off" LEDs (was 0x1082)
 
+// ======================== DISPLAY STYLE CONFIGURATION ========================
+// Display styles: 0 = Default (solid blocks), 1 = Realistic (circular LEDs)
+#define DEFAULT_DISPLAY_STYLE 1  // Start with realistic style
+
+// Color presets (RGB565 format)
+#define COLOR_RED         0xF800
+#define COLOR_GREEN       0x07E0
+#define COLOR_BLUE        0x001F
+#define COLOR_YELLOW      0xFFE0
+#define COLOR_CYAN        0x07FF
+#define COLOR_MAGENTA     0xF81F
+#define COLOR_WHITE       0xFFFF
+#define COLOR_ORANGE      0xFD20
+#define COLOR_DARK_GRAY   0x7BEF
+#define COLOR_LIGHT_GRAY  0xC618
+#define COLOR_BLACK       0x0000
+
 // Calculate display dimensions
 // When LED_SPACING = 0, formula simplifies to: LED_SIZE * count
+// Plus 4-pixel gap between the two matrix rows (authentic spacing)
 #define DISPLAY_WIDTH     (LED_SIZE * TOTAL_WIDTH)
-#define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT)
+#define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT + 4)  // +4 for authentic row gap
 
 // ======================== TIMING CONFIGURATION ========================
+#define BRIGHTNESS_UPDATE_INTERVAL   5000   // Update brightness every 5s
 #define SENSOR_UPDATE_INTERVAL       60000  // Update sensor every 60s
 #define NTP_SYNC_INTERVAL            3600000 // Sync NTP every hour
 #define STATUS_PRINT_INTERVAL        10000  // Print status every 10s
+#define DISPLAY_MANUAL_OVERRIDE_DURATION 300000 // 5 minutes
 
 // ======================== DEBUG CONFIGURATION ========================
 #define DEBUG_ENABLED 1
+#define ALWAYS_ON_MODE 1  // Display always on (TFT version has no PIR sensor)
 
 // ======================== DISPLAY OPTIMIZATION ========================
+#define BRIGHTNESS_BOOST 1  // Set to 1 for maximum brightness (ignores brightness level)
 #define FAST_REFRESH 1      // Set to 1 to only redraw changed pixels (much faster)
 
 #if DEBUG_ENABLED
@@ -126,6 +140,7 @@ int hours = 0, minutes = 0, seconds = 0;
 int hours24 = 0;  // 24-hour format
 int day = 1, month = 1, year = 2025;
 int lastSecond = -1;
+bool use24HourFormat = false;  // Default to 12-hour format
 
 // ======================== SENSOR VARIABLES ========================
 bool sensorAvailable = false;
@@ -134,10 +149,37 @@ int humidity = 0;
 int pressure = 0;
 bool useFahrenheit = false;
 
-// ======================== UPDATE TIMERS ========================
+// ======================== BRIGHTNESS AND DISPLAY ========================
+int displayTimer = 0;
+int brightness = 8;  // 0-15 scale (converted to 0-255 for TFT backlight)
+unsigned long lastBrightnessUpdate = 0;
 unsigned long lastSensorUpdate = 0;
 unsigned long lastNTPSync = 0;
 unsigned long lastStatusPrint = 0;
+
+// Manual brightness override
+bool brightnessManualOverride = false;
+int manualBrightness = 8;
+
+// Display control
+bool displayOn = true;
+bool displayManualOverride = false;
+unsigned long displayManualOverrideTimeout = 0;
+
+// Display schedule (OFF window)
+bool scheduleOffEnabled = true;  // Changed default to ENABLED
+int scheduleOffStartHour = 23;
+int scheduleOffStartMinute = 0;
+int scheduleOffEndHour = 7;
+int scheduleOffEndMinute = 0;
+
+// ======================== DISPLAY STYLE VARIABLES ========================
+int displayStyle = DEFAULT_DISPLAY_STYLE;  // 0=Default, 1=Realistic
+uint16_t ledOnColor = COLOR_RED;           // Color for lit LEDs
+uint16_t ledSurroundColor = COLOR_DARK_GRAY; // Dark gray for authentic MAX7219 look
+uint16_t ledOffColor = 0x2000;             // Color for unlit LEDs (dim)
+bool surroundMatchesLED = false;           // Track if surround should match LED color
+bool forceFullRedraw = false;              // Flag to force immediate complete redraw
 
 // ======================== DISPLAY MODES ========================
 int currentMode = 0; // 0=Time+Temp, 1=Time Large, 2=Time+Date
@@ -291,36 +333,146 @@ void initTFT() {
   }
 }
 
+void setTFTBrightness(int level) {
+  // Control backlight via LED_PIN
+  // Since LED_PIN is digital (D8), we either turn it full ON or OFF
+  // For actual PWM brightness control, you'd need a PWM-capable pin
+  
+  if (level > 0) {
+    digitalWrite(LED_PIN, HIGH);  // Backlight ON
+  } else {
+    digitalWrite(LED_PIN, LOW);   // Backlight OFF
+  }
+  
+  DEBUG(Serial.printf("TFT Brightness set to %d/15 (Backlight: %s)\n", level, level > 0 ? "ON" : "OFF"));
+}
+
 void clearScreen() {
   for (int i = 0; i < LINE_WIDTH * DISPLAY_ROWS; i++) {
     scr[i] = 0;
   }
 }
 
-void drawLEDPixel(int x, int y, bool lit) {
+// Dim an RGB565 color while preserving hue
+uint16_t dimRGB565(uint16_t color, int factor) {
+  // Extract RGB components from RGB565
+  int r = (color >> 11) & 0x1F;  // 5 bits
+  int g = (color >> 5) & 0x3F;   // 6 bits
+  int b = color & 0x1F;          // 5 bits
+  
+  // Dim each component by factor (1=50%, 2=33%, 3=25%, etc)
+  r = r / (factor + 1);
+  g = g / (factor + 1);
+  b = b / (factor + 1);
+  
+  // Recombine into RGB565
+  return (r << 11) | (g << 5) | b;
+}
+
+// Force a complete refresh by resetting FAST_REFRESH tracking
+void forceCompleteRefresh() {
+  // This will be called by refreshAll to reset its static state
+  tft.fillScreen(BG_COLOR);
+  clearScreen();
+}
+
+void drawLEDPixel(int x, int y, bool lit, int brightness) {
   // Bounds checking
   if (x < 0 || x >= TOTAL_WIDTH || y < 0 || y >= TOTAL_HEIGHT) {
     return;
   }
   
   // Calculate screen position with centering offset
-  // Note: Recalculate each time to ensure we use correct DISPLAY_WIDTH/HEIGHT
   int offsetX = max(0, (tft.width() - DISPLAY_WIDTH) / 2);
   int offsetY = max(0, (tft.height() - DISPLAY_HEIGHT) / 2);
   
+  // Add extra gap between matrix rows (after row 7, before row 8)
+  // 4-pixel gap for authentic MAX7219 hardware spacing
+  int matrixGap = (y >= 8) ? 4 : 0;  // 4-pixel gap between matrix rows
+  
   int screenX = offsetX + x * LED_SIZE;
-  int screenY = offsetY + y * LED_SIZE;
+  int screenY = offsetY + y * LED_SIZE + matrixGap;
   
-  uint16_t color;
-  if (lit) {
-    // Draw lit LEDs using the configured LED_COLOR
-    color = LED_COLOR;
-  } else {
-    color = LED_OFF_COLOR;  // Dim "off" LED
+  if (displayStyle == 0) {
+    // ========== DEFAULT STYLE: Solid square blocks ==========
+    uint16_t color = lit ? ledOnColor : BG_COLOR;  // Off LEDs are BLACK
+    tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, color);
+  } 
+  else {
+    // ========== REALISTIC STYLE: Circular LED with surround ==========
+    // Enhanced for authenticity matching real MAX7219 hardware
+    
+    if (!lit) {
+      // OFF LED: Show dark circle (visible but dim, like real hardware)
+      // Real LEDs are visible even when off - dark red/gray circle
+      
+      // Fill background black
+      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, BG_COLOR);
+      
+      // Draw subtle dark circle for off LED (visible against black)
+      // Using darker version of surround color for off LED housing
+      uint16_t offHousing = dimRGB565(ledSurroundColor, 7);  // Very dim (1/8 brightness)
+      uint16_t offLED = 0x1800;  // Very dark red (barely visible)
+      
+      for (int py = 1; py < 9; py++) {
+        for (int px = 1; px < 9; px++) {
+          int cx = px - 1;
+          int cy = py - 1;
+          int dx = (cx * 2 - 7);
+          int dy = (cy * 2 - 7);
+          int distSq = dx * dx + dy * dy;
+          
+          if (distSq <= 42) {  // Inner dark circle
+            tft.drawPixel(screenX + px, screenY + py, offLED);
+          }
+          else if (distSq <= 58) {  // Dim surround
+            tft.drawPixel(screenX + px, screenY + py, offHousing);
+          }
+        }
+      }
+    }
+    else {
+      // LIT LED: Draw bright circular LED with surround
+      // Optimized with fillRect for borders
+      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, BG_COLOR);
+      
+      // Dim the surround while preserving color hue
+      uint16_t dimSurround = dimRGB565(ledSurroundColor, 1);  // 50% brightness
+      
+      // Draw from outside in for better circular appearance
+      for (int py = 1; py < 9; py++) {
+        for (int px = 1; px < 9; px++) {
+          int cx = px - 1;
+          int cy = py - 1;
+          int dx = (cx * 2 - 7);
+          int dy = (cy * 2 - 7);
+          int distSq = dx * dx + dy * dy;
+          
+          uint16_t pixelColor;
+          
+          // Tighter circles for more pronounced round shape
+          if (distSq <= 18) {
+            // Bright center (core)
+            pixelColor = ledOnColor;
+          }
+          else if (distSq <= 42) {
+            // Main LED body (still bright)
+            pixelColor = ledOnColor;
+          }
+          else if (distSq <= 58) {
+            // Surround/bezel ring (dimmed for subtlety)
+            pixelColor = dimSurround;
+          }
+          else {
+            // Outside circle: black
+            continue;
+          }
+          
+          tft.drawPixel(screenX + px, screenY + py, pixelColor);
+        }
+      }
+    }
   }
-  
-  // Use fillRect instead of fillRoundRect - MUCH faster (no anti-aliasing)
-  tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, color);
 }
 
 void refreshAll() {
@@ -331,6 +483,17 @@ void refreshAll() {
     // Static buffer to track previous state for change detection
     static byte lastScr[LINE_WIDTH * DISPLAY_ROWS] = {0};
     static bool firstRun = true;
+    
+    // Check if external force refresh was requested
+    if (forceFullRedraw) {
+      // Clear the tracking buffer to force everything to redraw
+      for (int i = 0; i < LINE_WIDTH * DISPLAY_ROWS; i++) {
+        lastScr[i] = 0xFF;  // Set to invalid state
+      }
+      forceFullRedraw = false;  // Clear the flag
+      firstRun = true;  // Treat as first run
+      DEBUG(Serial.println("FAST_REFRESH cache cleared - forcing full redraw"));
+    }
   #endif
   
   // Process both rows of matrices (0-7 pixels and 8-15 pixels)
@@ -352,7 +515,7 @@ void refreshAll() {
               int displayY = row * 8 + bitPos;  // Calculate actual Y position (0-15)
               bool lit = (pixelByte & (1 << bitPos)) != 0;
               
-              drawLEDPixel(displayX, displayY, lit);
+              drawLEDPixel(displayX, displayY, lit, brightness);
             }
             
         #if FAST_REFRESH
@@ -476,32 +639,60 @@ void displayTimeAndTemp() {
   char buf[32];
   bool showDots = (seconds % 2) == 0;  // Blink colon every second
   
-  // Top row (yPos = 0): Time - using 12-hour format with seconds
-  int x = (hours > 9) ? 0 : 2;
-  sprintf(buf, "%d", hours);
+  // Top row (yPos = 0): Time - optimized to fit in 32 pixels
+  // Use tighter spacing to fit everything
+  int x = 0;  // Start at very left edge
+  
+  // Determine display hours and whether to show seconds
+  int displayHours = use24HourFormat ? hours24 : hours;
+  bool canShowSeconds = true;  // Assume we can show seconds
+  
+  // In 24-hour mode with hours >= 10, we need more space
+  // Example: "23:45:12" needs more pixels than "9:45:12"
+  if (use24HourFormat && hours24 >= 10) {
+    canShowSeconds = false;  // Not enough room for seconds in 24-hour mode
+  }
+  
+  // Hours (1-2 digits)
+  sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    if (*(p+1)) x++;  // Add spacing only between digits (saves space)
   }
   
+  // Colon (or space if not showing)
   if (showDots) {
-    x += drawCharWithY(x, 0, ':', digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, ':', digits5x8rn);
+    x += 1;  // Spacing after colon when showing
   } else {
-    x += 2;  // Space for colon
+    x += 2;  // Reserve colon width when hidden (NOT 6 - that's too much!)
   }
   
-  x += (hours >= 20) ? 0 : 1;
+  // Minutes (always 2 digits)
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    if (*(p+1)) x++;  // Add spacing only between digits (saves space)
   }
   
-  sprintf(buf, "%02d", seconds);
-  for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits3x5) + 1;
+  // Seconds (2 digits in smaller font) - only if there's room
+  if (canShowSeconds) {
+    // Small gap before seconds
+    x++;
+    
+    sprintf(buf, "%02d", seconds);
+    if (x + 7 <= LINE_WIDTH) {  // Check if seconds will fit (3px*2 + 1 spacing = 7px)
+      for (const char* p = buf; *p; p++) {
+        if (x < LINE_WIDTH - 3) {  // Ensure char fits
+          x += drawCharWithY(x, 0, *p, digits3x5);
+          if (*(p+1) && x < LINE_WIDTH) x++;  // Add spacing if room
+        }
+      }
+    }
   }
   
   // Bottom row (yPos = 1): Temperature and Humidity
-  x = 1;
+  x = 0;  // Start at left
   if (sensorAvailable) {
     int displayTemp = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
     char tempUnit = useFahrenheit ? 'F' : 'C';
@@ -511,13 +702,18 @@ void displayTimeAndTemp() {
   }
   
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 1, *p, font3x7) + 1;
+    if (x < LINE_WIDTH - 3) {  // Ensure character fits
+      x += drawCharWithY(x, 1, *p, font3x7);
+      if (*(p+1) && x < LINE_WIDTH) x++;
+    }
   }
   
-  // Shift bottom line slightly (as in original)
-  for (int i = 0; i < LINE_WIDTH; i++) {
-    scr[LINE_WIDTH + i] <<= 1;
-  }
+  // NOTE: Bottom line shift disabled - causes visual artifacts on TFT
+  // This was from original MAX7219 code but looks wrong on TFT display
+  // Uncomment if you want the original behavior:
+  // for (int i = 0; i < LINE_WIDTH; i++) {
+  //   scr[LINE_WIDTH + i] <<= 1;
+  // }
 }
 
 void displayTimeLarge() {
@@ -526,28 +722,45 @@ void displayTimeLarge() {
   char buf[32];
   bool showDots = (seconds % 2) == 0;
   
+  // Determine display hours based on format
+  int displayHours = use24HourFormat ? hours24 : hours;
+  
   // Large time display on top row using 16-pixel tall font
-  int x = (hours > 9) ? 0 : 3;
-  sprintf(buf, "%d", hours);
+  // Start position depends on whether hours is 1 or 2 digits
+  int x = (displayHours > 9) ? 0 : 3;
+  
+  // Draw hours
+  sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x16rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x16rn);
+    if (*(p+1)) x++;  // Spacing between hour digits only
   }
   
+  // Draw colon - reserve same total space whether showing or not
   if (showDots) {
-    x += drawCharWithY(x, 0, ':', digits5x16rn) + 1;
+    x += drawCharWithY(x, 0, ':', digits5x16rn);
+    // No spacing after colon in large mode (tight layout)
   } else {
-    x += 2;
+    x += 1;  // Reserve colon width when not showing
   }
   
-  x += (hours >= 20) ? 0 : 1;
+  // Draw minutes - NO extra spacing before, tight to colon
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x16rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x16rn);
+    if (*(p+1)) x++;  // Spacing between minute digits only
   }
   
+  // Add small gap before seconds
+  x++;
+  
+  // Draw seconds in small font
   sprintf(buf, "%02d", seconds);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, font3x7) + 1;
+    if (x < LINE_WIDTH - 3) {  // Check if room remains
+      x += drawCharWithY(x, 0, *p, font3x7);
+      if (*(p+1) && x < LINE_WIDTH - 3) x++;  // Spacing between second digits if room
+    }
   }
 }
 
@@ -557,23 +770,38 @@ void displayTimeAndDate() {
   char buf[32];
   bool showDots = (seconds % 2) == 0;
   
+  // Determine display hours based on format
+  int displayHours = use24HourFormat ? hours24 : hours;
+  
   // Top row: Time
   int x = 0;
-  sprintf(buf, "%02d", hours24);
+  sprintf(buf, "%d", displayHours);  // No leading zero
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    if (*(p+1)) x++;  // Spacing only between digits (saves space)
   }
   
   if (showDots) {
-    x += drawCharWithY(x, 0, ':', digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, ':', digits5x8rn);
+    x += 1;  // Spacing after colon when showing
   } else {
-    x += 2;
+    x += 2;  // Reserve colon width when hidden
   }
   
-  x += 1;
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn) + 1;
+    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    if (*(p+1)) x++;  // Spacing only between digits (saves space)
+  }
+  
+  // Add seconds in small font
+  x++;  // Small gap before seconds
+  sprintf(buf, "%02d", seconds);
+  for (const char* p = buf; *p; p++) {
+    if (x < LINE_WIDTH - 3) {  // Check if room remains
+      x += drawCharWithY(x, 0, *p, digits3x5);
+      if (*(p+1) && x < LINE_WIDTH - 3) x++;  // Spacing between second digits if room
+    }
   }
   
   // Bottom row: Date
@@ -583,10 +811,10 @@ void displayTimeAndDate() {
     x += drawCharWithY(x, 1, *p, font3x7) + 1;
   }
   
-  // Shift bottom line slightly
-  for (int i = 0; i < LINE_WIDTH; i++) {
-    scr[LINE_WIDTH + i] <<= 1;
-  }
+  // NOTE: Bottom line shift disabled - causes visual artifacts on TFT
+  // for (int i = 0; i < LINE_WIDTH; i++) {
+  //   scr[LINE_WIDTH + i] <<= 1;
+  // }
 }
 
 // ======================== SENSOR FUNCTIONS ========================
@@ -699,18 +927,82 @@ void updateTime() {
   
   if (seconds != lastSecond) {
     lastSecond = seconds;
-    switch (currentMode) {
-      case 0: displayTimeAndTemp(); break;
-      case 1: displayTimeLarge(); break;
-      case 2: displayTimeAndDate(); break;
+    if (displayOn) {
+      switch (currentMode) {
+        case 0: displayTimeAndTemp(); break;
+        case 1: displayTimeLarge(); break;
+        case 2: displayTimeAndDate(); break;
+      }
+      refreshAll();
     }
-    refreshAll();
   }
   
   // Auto-switch modes
   if (millis() - lastModeSwitch > MODE_SWITCH_INTERVAL) {
     currentMode = (currentMode + 1) % 3;
     lastModeSwitch = millis();
+  }
+}
+
+// ======================== DISPLAY CONTROL FUNCTIONS ========================
+
+bool isWithinScheduleOffWindow() {
+  if (!scheduleOffEnabled) return false;
+  
+  int nowMinutes = hours24 * 60 + minutes;
+  int startMinutes = scheduleOffStartHour * 60 + scheduleOffStartMinute;
+  int endMinutes = scheduleOffEndHour * 60 + scheduleOffEndMinute;
+  
+  if (startMinutes < endMinutes) {
+    return (nowMinutes >= startMinutes && nowMinutes < endMinutes);
+  } else {
+    return (nowMinutes >= startMinutes || nowMinutes < endMinutes);
+  }
+}
+
+void applyDisplayHardwareState(bool shouldBeOn, int brightnessLevel) {
+  if (shouldBeOn) {
+    setTFTBrightness(brightnessLevel);
+    displayOn = true;
+  } else {
+    setTFTBrightness(0);
+    displayOn = false;
+    clearScreen();
+    refreshAll();
+  }
+}
+
+void handleDisplayControl() {
+  unsigned long now = millis();
+  
+  // Check manual override timeout
+  if (displayManualOverride && now > displayManualOverrideTimeout) {
+    displayManualOverride = false;
+    DEBUG(Serial.println("Display manual override expired"));
+  }
+  
+  // Determine if display should be on
+  bool shouldDisplayBeOn = false;
+  
+  #if ALWAYS_ON_MODE
+    // Always-on mode (TFT version has no motion sensor)
+    shouldDisplayBeOn = true;
+  #else
+    bool withinOffWindow = isWithinScheduleOffWindow();
+    if (displayManualOverride) {
+      shouldDisplayBeOn = displayOn;
+    } else {
+      shouldDisplayBeOn = !withinOffWindow;
+    }
+  #endif
+  
+  // Brightness is always fixed at level 8 (TFT backlight control)
+  int targetBrightness = 8;
+  
+  // Apply state
+  bool stateChanged = (shouldDisplayBeOn != displayOn);
+  if (stateChanged) {
+    applyDisplayHardwareState(shouldDisplayBeOn, targetBrightness);
   }
 }
 
@@ -730,6 +1022,7 @@ void setupWebServer() {
     html += "h2{color:#666;border-bottom:2px solid #4CAF50;padding-bottom:5px;}";
     html += "button{background:#4CAF50;color:white;border:none;padding:10px 20px;cursor:pointer;border-radius:3px;margin:5px;}";
     html += "button:hover{background:#45a049;}";
+    html += "input[type=range]{width:200px;}";
     html += "select{padding:5px;font-size:14px;}";
     html += "</style>";
     html += "</head><body>";
@@ -750,19 +1043,53 @@ void setupWebServer() {
     }
     
     html += "<div class='card'><h2>Settings</h2>";
-    html += "<p>Temperature Unit: " + String(useFahrenheit ? "Fahrenheit" : "Celsius") + "</p>";
     html += "<button onclick=\"location.href='/temperature?mode=toggle'\">Toggle °C/°F</button>";
     html += "</div>";
     
-    html += "<div class='card'><h2>Timezone</h2>";
-    html += "<p>Current: " + String(timezones[currentTimezone].name) + "</p>";
+    html += "<div class='card'><h2>Display Style</h2>";
+    html += "<p>Current Style: " + String(displayStyle == 0 ? "Default (Blocks)" : "Realistic (LEDs)") + "</p>";
+    html += "<button onclick=\"location.href='/style?mode=toggle'\">Toggle Style</button><br><br>";
+    
+    html += "<p>LED Color:</p>";
+    html += "<select id='ledcolor' onchange=\"location.href='/style?ledcolor='+this.value\">";
+    html += "<option value='0'" + String(ledOnColor == COLOR_RED ? " selected" : "") + ">Red</option>";
+    html += "<option value='1'" + String(ledOnColor == COLOR_GREEN ? " selected" : "") + ">Green</option>";
+    html += "<option value='2'" + String(ledOnColor == COLOR_BLUE ? " selected" : "") + ">Blue</option>";
+    html += "<option value='3'" + String(ledOnColor == COLOR_YELLOW ? " selected" : "") + ">Yellow</option>";
+    html += "<option value='4'" + String(ledOnColor == COLOR_CYAN ? " selected" : "") + ">Cyan</option>";
+    html += "<option value='5'" + String(ledOnColor == COLOR_MAGENTA ? " selected" : "") + ">Magenta</option>";
+    html += "<option value='6'" + String(ledOnColor == COLOR_WHITE ? " selected" : "") + ">White</option>";
+    html += "<option value='7'" + String(ledOnColor == COLOR_ORANGE ? " selected" : "") + ">Orange</option>";
+    html += "</select><br><br>";
+    
+    html += "<p>Surround Color:</p>";
+    html += "<select id='surroundcolor' onchange=\"location.href='/style?surroundcolor='+this.value\">";
+    html += "<option value='0'" + String(ledSurroundColor == COLOR_WHITE ? " selected" : "") + ">White</option>";
+    html += "<option value='1'" + String(ledSurroundColor == COLOR_LIGHT_GRAY ? " selected" : "") + ">Light Gray</option>";
+    html += "<option value='2'" + String(ledSurroundColor == COLOR_DARK_GRAY ? " selected" : "") + ">Dark Gray</option>";
+    html += "<option value='3'" + String(ledSurroundColor == COLOR_RED ? " selected" : "") + ">Red</option>";
+    html += "<option value='4'" + String(ledSurroundColor == COLOR_GREEN ? " selected" : "") + ">Green</option>";
+    html += "<option value='5'" + String(ledSurroundColor == COLOR_BLUE ? " selected" : "") + ">Blue</option>";
+    html += "<option value='6'" + String(ledSurroundColor == COLOR_YELLOW ? " selected" : "") + ">Yellow</option>";
+    html += "<option value='7'" + String(ledSurroundColor == ledOnColor ? " selected" : "") + ">Match LED Color</option>";
+    html += "</select>";
+    html += "</div>";
+    
+    html += "<div class='card'><h2>Timezone & Time Format</h2>";
+    html += "<p>Current Timezone: " + String(timezones[currentTimezone].name) + "</p>";
     html += "<select id='tz' onchange=\"location.href='/timezone?tz='+this.value\">";
     for (int i = 0; i < numTimezones; i++) {
       html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
       html += timezones[i].name;
       html += "</option>";
     }
-    html += "</select>";
+    html += "</select><br><br>";
+    
+    html += "<p>Time Format: " + String(use24HourFormat ? "24-Hour" : "12-Hour") + "</p>";
+    html += "<button onclick=\"location.href='/timeformat?mode=toggle'\">Toggle 12/24 Hour</button>";
+    if (use24HourFormat) {
+      html += "<p style='color:#666;font-size:12px;margin-top:10px;'>⚠️ Note: In Time+Temp mode, seconds not displayed when hours ≥ 10 due to space constraints</p>";
+    }
     html += "</div>";
     
     html += "<div class='card'><h2>System</h2>";
@@ -785,7 +1112,8 @@ void setupWebServer() {
   
   server.on("/api/status", []() {
     int tempDisplay = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
-    String json = "{\"sensor_available\":" + String(sensorAvailable ? "true" : "false") + 
+    String json = "{\"display\":" + String(displayOn ? "true" : "false") + 
+                  ",\"sensor_available\":" + String(sensorAvailable ? "true" : "false") + 
                   ",\"temperature\":" + String(tempDisplay) + 
                   ",\"humidity\":" + String(humidity) + 
                   ",\"pressure\":" + String(pressure) + 
@@ -793,18 +1121,43 @@ void setupWebServer() {
     server.send(200, "application/json", json);
   });
   
+  // Brightness control endpoint
+  server.on("/brightness", []() {
+    if (server.hasArg("mode")) {
+      brightnessManualOverride = !brightnessManualOverride;
+      DEBUG(Serial.printf("Brightness mode: %s\n", brightnessManualOverride ? "Manual" : "Automatic"));
+    }
+    if (server.hasArg("value")) {
+      int newBrightness = server.arg("value").toInt();
+      if (newBrightness >= 1 && newBrightness <= 15) {
+        manualBrightness = newBrightness;
+        if (brightnessManualOverride) {
+          brightness = manualBrightness;
+          if (displayOn) {
+            setTFTBrightness(brightness);
+          }
+        }
+        DEBUG(Serial.printf("Manual brightness set to %d\n", manualBrightness));
+      }
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+
   // Temperature unit toggle endpoint
   server.on("/temperature", []() {
     if (server.hasArg("mode")) {
       useFahrenheit = !useFahrenheit;
       DEBUG(Serial.printf("Temperature unit: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
       
-      switch (currentMode) {
-        case 0: displayTimeAndTemp(); break;
-        case 1: displayTimeLarge(); break;
-        case 2: displayTimeAndDate(); break;
+      if (displayOn) {
+        switch (currentMode) {
+          case 0: displayTimeAndTemp(); break;
+          case 1: displayTimeLarge(); break;
+          case 2: displayTimeAndDate(); break;
+        }
+        refreshAll();
       }
-      refreshAll();
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
@@ -820,6 +1173,183 @@ void setupWebServer() {
         syncNTP();
       }
     }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+  
+  // Time format (12/24 hour) toggle endpoint
+  server.on("/timeformat", []() {
+    if (server.hasArg("mode")) {
+      use24HourFormat = !use24HourFormat;
+      DEBUG(Serial.printf("Time format changed to: %s\n", use24HourFormat ? "24-Hour" : "12-Hour"));
+      
+      // Force immediate display update
+      if (displayOn) {
+        forceFullRedraw = true;
+        switch (currentMode) {
+          case 0: displayTimeAndTemp(); break;
+          case 1: displayTimeLarge(); break;
+          case 2: displayTimeAndDate(); break;
+        }
+        refreshAll();
+      }
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+  
+  // Display on/off toggle endpoint
+  server.on("/display", []() {
+    if (server.hasArg("mode")) {
+      displayOn = !displayOn;
+      displayManualOverride = true;
+      displayManualOverrideTimeout = millis() + DISPLAY_MANUAL_OVERRIDE_DURATION;
+      
+      if (displayOn) {
+        applyDisplayHardwareState(true, 8);  // Fixed brightness level
+        DEBUG(Serial.printf("Display toggled ON (manual override for 5 minutes)\n"));
+      } else {
+        applyDisplayHardwareState(false, 0);
+        DEBUG(Serial.printf("Display toggled OFF (manual override for 5 minutes)\n"));
+      }
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+  
+  // Schedule configuration endpoint
+  server.on("/schedule", []() {
+    if (server.hasArg("enabled")) {
+      scheduleOffEnabled = (server.arg("enabled") == "1");
+    }
+    if (server.hasArg("start_hour")) {
+      scheduleOffStartHour = constrain(server.arg("start_hour").toInt(), 0, 23);
+    }
+    if (server.hasArg("start_min")) {
+      scheduleOffStartMinute = constrain(server.arg("start_min").toInt(), 0, 59);
+    }
+    if (server.hasArg("end_hour")) {
+      scheduleOffEndHour = constrain(server.arg("end_hour").toInt(), 0, 23);
+    }
+    if (server.hasArg("end_min")) {
+      scheduleOffEndMinute = constrain(server.arg("end_min").toInt(), 0, 59);
+    }
+    
+    DEBUG(Serial.printf("Schedule updated - Enabled: %s, OFF: %02d:%02d-%02d:%02d\n",
+                        scheduleOffEnabled ? "Yes" : "No", 
+                        scheduleOffStartHour, scheduleOffStartMinute,
+                        scheduleOffEndHour, scheduleOffEndMinute));
+    
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+  
+  // Display style configuration endpoint
+  server.on("/style", []() {
+    bool changed = false;
+    
+    // Toggle display style
+    if (server.hasArg("mode") && server.arg("mode") == "toggle") {
+      displayStyle = (displayStyle == 0) ? 1 : 0;
+      changed = true;
+      DEBUG(Serial.printf("Display style toggled to: %d (%s)\n", 
+                          displayStyle, displayStyle == 0 ? "Default" : "Realistic"));
+    }
+    
+    // Set LED color
+    if (server.hasArg("ledcolor")) {
+      int colorIdx = server.arg("ledcolor").toInt();
+      switch(colorIdx) {
+        case 0: ledOnColor = COLOR_RED; break;
+        case 1: ledOnColor = COLOR_GREEN; break;
+        case 2: ledOnColor = COLOR_BLUE; break;
+        case 3: ledOnColor = COLOR_YELLOW; break;
+        case 4: ledOnColor = COLOR_CYAN; break;
+        case 5: ledOnColor = COLOR_MAGENTA; break;
+        case 6: ledOnColor = COLOR_WHITE; break;
+        case 7: ledOnColor = COLOR_ORANGE; break;
+        default: ledOnColor = COLOR_RED;
+      }
+      // Update the off color to be a dim version
+      ledOffColor = ledOnColor >> 3;  // Dim by dividing RGB components
+      
+      // If surround is in "Match LED Color" mode, update it too
+      if (surroundMatchesLED) {
+        ledSurroundColor = ledOnColor;
+      }
+      
+      changed = true;
+      DEBUG(Serial.printf("LED color changed to index: %d\n", colorIdx));
+    }
+    
+    // Set surround color
+    if (server.hasArg("surroundcolor")) {
+      int colorIdx = server.arg("surroundcolor").toInt();
+      switch(colorIdx) {
+        case 0: 
+          ledSurroundColor = COLOR_WHITE; 
+          surroundMatchesLED = false;
+          break;
+        case 1: 
+          ledSurroundColor = COLOR_LIGHT_GRAY; 
+          surroundMatchesLED = false;
+          break;
+        case 2: 
+          ledSurroundColor = COLOR_DARK_GRAY; 
+          surroundMatchesLED = false;
+          break;
+        case 3: 
+          ledSurroundColor = COLOR_RED; 
+          surroundMatchesLED = false;
+          break;
+        case 4: 
+          ledSurroundColor = COLOR_GREEN; 
+          surroundMatchesLED = false;
+          break;
+        case 5: 
+          ledSurroundColor = COLOR_BLUE; 
+          surroundMatchesLED = false;
+          break;
+        case 6: 
+          ledSurroundColor = COLOR_YELLOW; 
+          surroundMatchesLED = false;
+          break;
+        case 7: 
+          // Match LED color mode
+          ledSurroundColor = ledOnColor;
+          surroundMatchesLED = true;  // Track that we're in match mode
+          break;
+        default: 
+          ledSurroundColor = COLOR_WHITE;
+          surroundMatchesLED = false;
+      }
+      changed = true;
+      DEBUG(Serial.printf("Surround color changed to index: %d, match mode: %s\n", 
+                          colorIdx, surroundMatchesLED ? "ON" : "OFF"));
+    }
+    
+    // Force a complete redraw if anything changed
+    if (changed) {
+      // Clear the entire screen to black
+      tft.fillScreen(BG_COLOR);
+      
+      // Set the global flag to force FAST_REFRESH to ignore its cache
+      forceFullRedraw = true;
+      
+      // Immediately trigger display update with new colors
+      // This ensures instant visual feedback instead of waiting for next second
+      if (displayOn) {
+        switch (currentMode) {
+          case 0: displayTimeAndTemp(); break;
+          case 1: displayTimeLarge(); break;
+          case 2: displayTimeAndDate(); break;
+        }
+        refreshAll();  // Draw immediately with new colors
+      }
+      
+      DEBUG(Serial.println("Style changed - immediate redraw complete"));
+    }
+    
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
@@ -847,7 +1377,7 @@ void setup() {
   delay(1000);
   
   DEBUG(Serial.println("\n\n╔════════════════════════════════════════╗"));
-  DEBUG(Serial.println("║   ESP8266 TFT Matrix Clock             ║"));
+  DEBUG(Serial.println("║   ESP8266 TFT Matrix Clock v1.0        ║"));
   DEBUG(Serial.println("║   TFT Display Edition                  ║"));
   DEBUG(Serial.println("╚════════════════════════════════════════╝\n"));
   
@@ -859,6 +1389,9 @@ void setup() {
   digitalWrite(LED_PIN, HIGH);  // Turn backlight ON
   
   showMessage("INIT");
+  
+  // Display is always on (no motion sensor in TFT version)
+  displayOn = true;
   
   // Test sensor
   sensorAvailable = testSensor();
@@ -891,6 +1424,7 @@ void setup() {
   delay(1000);
   
   lastNTPSync = millis();
+  lastBrightnessUpdate = millis();
   lastSensorUpdate = millis();
   lastStatusPrint = millis();
   lastModeSwitch = millis();
@@ -906,6 +1440,9 @@ void loop() {
   // Update time
   updateTime();
   
+  // Handle display control (schedule and manual override)
+  handleDisplayControl();
+  
   // Update sensor data
   if (sensorAvailable && now - lastSensorUpdate >= SENSOR_UPDATE_INTERVAL) {
     updateSensorData();
@@ -920,8 +1457,8 @@ void loop() {
   
   // Print status
   if (now - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-    DEBUG(Serial.printf("Time: %02d:%02d | Temp: %d°C | Hum: %d%%\n",
-                        hours24, minutes, temperature, humidity));
+    DEBUG(Serial.printf("Time: %02d:%02d | Date: %02d/%02d/%04d | Temp: %d°C | Hum: %d%%\n",
+                        hours24, minutes, day, month, year, temperature, humidity));
     lastStatusPrint = now;
   }
   
