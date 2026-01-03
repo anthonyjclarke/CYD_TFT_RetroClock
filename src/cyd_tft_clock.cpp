@@ -1,48 +1,62 @@
-#include "Arduino.h"
-
 /*
- * ESP8266 TFT Matrix Clock - TFT Edition
- * Author: Refactored from LED Matrix version by Anthony Clarke
- * Display: 1.8/2.4/2.8 Inch SPI TFT LCD (ILI9341/ST7789)
+ * ESP32 CYD TFT Matrix Clock
+ * Author: Refactored for ESP32 CYD by Anthony Clarke
+ * Board: ESP32-2432S028R (Cheap Yellow Display)
+ * Display: Built-in 2.8" ILI9341 320x240 TFT
  *
- * This version simulates the LED matrix appearance on a TFT display
- * All functionality remains identical to the original LED matrix version
+ * This version is refactored from the ESP8266 TFT LED Matrix Clock
+ * to run on the ESP32 Cheap Yellow Display (CYD) board.
+ *
+ * ======================== WiFi CONFIGURATION ========================
+ * Three ways to reset/configure WiFi:
+ *
+ * 1. BOOT BUTTON METHOD (Recommended for first-time setup):
+ *    - Hold the BOOT button (GPIO 0) during power-up
+ *    - Keep holding for 3 seconds until LED turns RED
+ *    - Release button - WiFi credentials will be cleared
+ *    - Device will enter config portal mode
+ *    - Connect to "CYD_Clock_Setup" WiFi network
+ *    - Configure your WiFi credentials in the web portal
+ *
+ * 2. WEB INTERFACE METHOD:
+ *    - Access the web interface at http://<IP_ADDRESS>
+ *    - Scroll to "System" section
+ *    - Click "Reset WiFi" button
+ *    - Device will restart in config portal mode
+ *
+ * 3. SERIAL MONITOR METHOD (for development):
+ *    - Upload code with fresh ESP32 (or with erased flash)
+ *    - WiFiManager will automatically start config portal
+ *    - Connect to "CYD_Clock_Setup" network
+ *
+ * LED Indicators during WiFi setup:
+ *    - YELLOW: BOOT button detected, waiting for 3-second hold
+ *    - RED: WiFi reset confirmed
+ *    - BLUE: Connecting to WiFi
+ *    - PURPLE: Config portal active (AP mode)
+ *    - GREEN: WiFi connected successfully
  *
  * ======================== CHANGELOG ========================
+ * 28th December 2025 - Version 3.0 (CYD Port):
+ *   - Complete refactor from ESP8266 to ESP32 CYD board
+ *   - Changed WiFi libraries to ESP32 variants
+ *   - Updated pin definitions for CYD hardware
+ *   - Added RGB LED support (GPIO 4, 16, 17)
+ *   - Updated I2C pins for CYD extended GPIO connector
+ *   - Maintained all original functionality and web interface
+ *   - Updated TFT_eSPI configuration for CYD pinout
+ *   - Larger display (320x240) allows better LED matrix simulation
+ *
+ * Previous Version History:
  * 19th December 2025 - Version 2.2:
- *   - Added TFT Display Mirror feature on web page (real-time Canvas rendering)
- *   - New /api/display endpoint returns 64-byte buffer with minimal overhead (~200 bytes/request)
- *   - Canvas-based LED matrix rendering in browser (supports both display styles)
- *   - Auto-refresh every 500ms for near real-time display mirroring
- *   - Dynamically syncs LED color, surround color, and display style settings
+ *   - Added TFT Display Mirror feature on web page
+ *   - Canvas-based LED matrix rendering in browser
  *
  * 18th December 2025 - Version 2.1:
- *   - Fixed Mode 2 (Time+Date) to remove leading zero from single-digit hours
- *   - Completely redesigned web interface with modern dark theme
- *   - Added large digital clock display with live auto-update (updates every second)
- *   - Implemented dynamic temperature icons based on actual temperature readings:
- *     * 🔥 Hot (≥30°C), ☀️ Warm (25-29°C), 🌤️ Pleasant (20-24°C)
- *     * ⛅ Mild (15-19°C), ☁️ Cool (10-14°C), 🌧️ Cold (5-9°C), ❄️ Freezing (<5°C)
- *   - Added dynamic humidity icons (💦 high, 💧 normal, 🏜️ low)
- *   - Enhanced environment display with color-coded values and glowing effects
- *   - Implemented fully responsive web design for mobile/tablet/desktop
- *   - Fixed LED surround color rendering - now properly visible and configurable
- *   - Improved LED pixel rendering with better surround ring visibility
- *   - Added fluid typography with CSS clamp() for all screen sizes
- *   - Created responsive grid layout for environment cards
- *   - Added touch-friendly UI elements and hover effects
- *   - Migrated from Adafruit_GFX/Adafruit_ILI9341 to TFT_eSPI library
- *   - Improved rendering performance with hardware-optimized library
- *   - Configured 40MHz SPI bus speed for faster display updates
+ *   - Fixed Mode 2 (Time+Date) leading zero removal
+ *   - Redesigned web interface with modern dark theme
+ *   - Added dynamic temperature/humidity icons
  *
- * =========================== TODO ==========================
- * - Get weather from online API and display on matrix and webpage
- * - Add OTA firmware update capability
- * - add mew display modes, like morphing (from @cbmamiga) 
- * - refactor code for ESP32 compatibility and use of the CYD display - https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display
- * - Update Readme.md with sample screenshots of new web interface and TFT display
- * - Optimize TFT drawing routines further for even faster refresh rates
- * 
  * ======================== FEATURES ========================
  * - Simulates 4x2 MAX7219 LED matrix appearance on TFT display
  * - WiFiManager for easy WiFi setup (no hardcoded credentials)
@@ -50,47 +64,77 @@
  * - Automatic NTP time synchronization with DST support
  * - Modern responsive web interface with live updates
  * - Realistic LED rendering with customizable colors
- * - Dynamic environment icons based on sensor readings
  * - Multiple timezone support with POSIX TZ strings
  * - Two display styles: Default (blocks) and Realistic (circular LEDs)
- * - Mobile-responsive design with adaptive layouts
+ * - RGB LED indicator on CYD board for status
+ *
+ * ======================== CYD HARDWARE ========================
+ * TFT Display: Built-in 2.8" ILI9341 320x240 (HSPI)
+ * Touchscreen: XPT2046 resistive (VSPI) - not used in this project
+ * RGB LED: GPIO 4 (Red), GPIO 16 (Green), GPIO 17 (Blue) - Active LOW
+ * I2C: GPIO 27 (SDA), GPIO 22 (SCL) - via extended connector
+ * Backlight: GPIO 21
+ * SD Card: Available but not used
  */
 
+#include "Arduino.h"
+
 // ======================== LIBRARIES ========================
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <WiFiManager.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 #include <time.h>
-#include <TZ.h>
 #include <TFT_eSPI.h>  // Hardware-specific library with optimized performance
+#include <DNSServer.h> // Required for WiFiManager on ESP32
 
 // ======================== PIN DEFINITIONS ========================
-// TFT Display SPI Pins - Now configured in User_Setup.h for TFT_eSPI
-#define LED_PIN   D8    // TFT Backlight control
+// TFT Display (built-in on CYD, configured in User_Setup.h)
+// MOSI: GPIO 13, MISO: GPIO 12, CLK: GPIO 14
+// CS: GPIO 15, DC: GPIO 2, RST: -1
 
-// Sensor Pins (BME280 only)
-#define SDA_PIN   D4    // I2C Data (BME280)
-#define SCL_PIN   D3    // I2C Clock (BME280)
+// Backlight control
+#define TFT_BL_PIN    21    // TFT Backlight control
+
+// RGB LED (active low - inverted logic)
+#define LED_R_PIN      4    // Red LED
+#define LED_G_PIN     16    // Green LED
+#define LED_B_PIN     17    // Blue LED
+
+// I2C for BME280 sensor (using extended GPIO connector CN1)
+#define SDA_PIN       27    // I2C Data
+#define SCL_PIN       22    // I2C Clock
+
+// Boot button (built-in on CYD board)
+#define BOOT_BTN_PIN   0    // Boot button (active LOW)
 
 // ======================== DISPLAY CONFIGURATION ========================
+// Virtual LED Matrix dimensions
 #define NUM_MAX           8      // Simulated number of 8x8 LED matrices (2 rows × 4 columns)
 #define MATRIX_WIDTH      8      // Width of each simulated matrix
 #define MATRIX_HEIGHT     8      // Height of each simulated matrix
 #define LINE_WIDTH        32     // Display width in pixels (4 matrices wide)
 #define DISPLAY_ROWS      2      // Number of rows of matrices
-#define ROTATE            90     // Display rotation to match original
-#define LED_SIZE          10     // Size of each simulated LED pixel (maximized for 320px width)
-#define LED_SPACING       0      // No spacing between LEDs
 #define TOTAL_WIDTH       32     // Total width: 32 pixels
 #define TOTAL_HEIGHT      16     // Total height: 16 pixels (2 rows of 8)
-#define LED_COLOR         0xF800 // Red color for LEDs (RGB565) - FULL BRIGHTNESS
+
+// CYD has a 320x240 display - LED size must fit 32 pixels across 320px width
+#define LED_SIZE          10      // Size of each simulated LED pixel (10 * 32 = 320px, fits in 320)
+#define LED_SPACING       1      // No spacing between LEDs
+
+// Color definitions (RGB565 format)
+#define LED_COLOR         0xF800 // Red color for LEDs
 #define BG_COLOR          0x0000 // Black background
-#define LED_OFF_COLOR     0x2000 // Slightly brighter dark red for "off" LEDs (was 0x1082)
+#define LED_OFF_COLOR     0x2000 // Dim red for "off" LEDs
+
+// Calculate display dimensions for centering
+// When LED_SPACING = 0: LED_SIZE * count
+// Plus 4-pixel gap between the two matrix rows (authentic spacing)
+#define DISPLAY_WIDTH     (LED_SIZE * TOTAL_WIDTH)   // 288 pixels (fits in 320)
+#define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT + 4)  // 148 pixels (fits in 240)
 
 // ======================== DISPLAY STYLE CONFIGURATION ========================
-// Display styles: 0 = Default (solid blocks), 1 = Realistic (circular LEDs)
 #define DEFAULT_DISPLAY_STYLE 1  // Start with realistic style
 
 // Color presets (RGB565 format)
@@ -106,12 +150,6 @@
 #define COLOR_LIGHT_GRAY  0xC618
 #define COLOR_BLACK       0x0000
 
-// Calculate display dimensions
-// When LED_SPACING = 0, formula simplifies to: LED_SIZE * count
-// Plus 4-pixel gap between the two matrix rows (authentic spacing)
-#define DISPLAY_WIDTH     (LED_SIZE * TOTAL_WIDTH)
-#define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT + 4)  // +4 for authentic row gap
-
 // ======================== TIMING CONFIGURATION ========================
 #define SENSOR_UPDATE_INTERVAL       60000  // Update sensor every 60s
 #define NTP_SYNC_INTERVAL            3600000 // Sync NTP every hour
@@ -121,8 +159,8 @@
 #define DEBUG_ENABLED 1
 
 // ======================== DISPLAY OPTIMIZATION ========================
-#define BRIGHTNESS_BOOST 1  // Set to 1 for maximum brightness (ignores brightness level)
-#define FAST_REFRESH 1      // Set to 1 to only redraw changed pixels (much faster)
+#define BRIGHTNESS_BOOST 1  // Set to 1 for maximum brightness
+#define FAST_REFRESH 1      // Set to 1 to only redraw changed pixels
 
 #if DEBUG_ENABLED
   #define DEBUG(x) x
@@ -135,12 +173,10 @@ TFT_eSPI tft = TFT_eSPI();  // TFT_eSPI uses configuration from User_Setup.h
 
 // ======================== DISPLAY BUFFER ========================
 // Virtual screen buffer matching original LED matrix structure
-// Buffer is organized as: scr[x + y * LINE_WIDTH] where each byte = 8 vertical pixels
-// With 8 matrices (2 rows × 4 columns): 32 pixels wide × 16 pixels tall
 byte scr[LINE_WIDTH * DISPLAY_ROWS]; // 32 columns × 2 rows = 64 bytes
 
 // ======================== GLOBAL OBJECTS ========================
-ESP8266WebServer server(80);
+WebServer server(80);
 WiFiManager wifiManager;
 Adafruit_BME280 bme280;
 
@@ -181,8 +217,21 @@ unsigned long lastModeSwitch = 0;
 #define MODE_SWITCH_INTERVAL 5000
 
 // ======================== TIMEZONE ========================
-// Timezone definitions are now in include/timezones.h
 int currentTimezone = 0;
+
+// ======================== RGB LED FUNCTIONS ========================
+void setRGBLed(bool red, bool green, bool blue) {
+  // CYD RGB LEDs are active LOW
+  digitalWrite(LED_R_PIN, red ? LOW : HIGH);
+  digitalWrite(LED_G_PIN, green ? LOW : HIGH);
+  digitalWrite(LED_B_PIN, blue ? LOW : HIGH);
+}
+
+void flashRGBLed(int r, int g, int b, int delayMs = 200) {
+  setRGBLed(r, g, b);
+  delay(delayMs);
+  setRGBLed(false, false, false);
+}
 
 // ======================== TFT DISPLAY FUNCTIONS ========================
 
@@ -190,8 +239,8 @@ void initTFT() {
   DEBUG(Serial.println("Initializing TFT Display..."));
 
   // Setup backlight pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);  // Turn backlight ON
+  pinMode(TFT_BL_PIN, OUTPUT);
+  digitalWrite(TFT_BL_PIN, HIGH);  // Turn backlight ON
   DEBUG(Serial.println("Backlight enabled"));
 
   // Add small delay before TFT initialization
@@ -199,8 +248,8 @@ void initTFT() {
 
   // TFT_eSPI initialization
   tft.init();
-  tft.setRotation(3);  // Rotation 3 = landscape mode (320x240)
-  DEBUG(Serial.printf("TFT_eSPI initialized, rotation set to 3\n"));
+  tft.setRotation(1);  // Rotation 1 = landscape mode (320x240) - adjust if needed
+  DEBUG(Serial.printf("TFT_eSPI initialized, rotation set to 1\n"));
 
   // Small delay after initialization
   delay(100);
@@ -220,10 +269,9 @@ void initTFT() {
   DEBUG(Serial.printf("LED Matrix area: %dx%d at offset (%d,%d)\n", 
         DISPLAY_WIDTH, DISPLAY_HEIGHT, offsetX, offsetY));
   
-  // Verify we have valid dimensions
   if (displayWidth <= 0 || displayHeight <= 0) {
     DEBUG(Serial.println("ERROR: Invalid TFT dimensions!"));
-    DEBUG(Serial.println("Check TFT wiring and display type selection"));
+    DEBUG(Serial.println("Check TFT configuration in User_Setup.h"));
   }
 }
 
@@ -235,23 +283,18 @@ void clearScreen() {
 
 // Dim an RGB565 color while preserving hue
 uint16_t dimRGB565(uint16_t color, int factor) {
-  // Extract RGB components from RGB565
-  int r = (color >> 11) & 0x1F;  // 5 bits
-  int g = (color >> 5) & 0x3F;   // 6 bits
-  int b = color & 0x1F;          // 5 bits
+  int r = (color >> 11) & 0x1F;
+  int g = (color >> 5) & 0x3F;
+  int b = color & 0x1F;
   
-  // Dim each component by factor (1=50%, 2=33%, 3=25%, etc)
   r = r / (factor + 1);
   g = g / (factor + 1);
   b = b / (factor + 1);
   
-  // Recombine into RGB565
   return (r << 11) | (g << 5) | b;
 }
 
-// Force a complete refresh by resetting FAST_REFRESH tracking
 void forceCompleteRefresh() {
-  // This will be called by refreshAll to reset its static state
   tft.fillScreen(BG_COLOR);
   clearScreen();
 }
@@ -267,7 +310,6 @@ void drawLEDPixel(int x, int y, bool lit) {
   int offsetY = ((tft.height() - DISPLAY_HEIGHT) / 2) > 0 ? ((tft.height() - DISPLAY_HEIGHT) / 2) : 0;
   
   // Add extra gap between matrix rows (after row 7, before row 8)
-  // 4-pixel gap for authentic MAX7219 hardware spacing
   int matrixGap = (y >= 8) ? 4 : 0;  // 4-pixel gap between matrix rows
   
   int screenX = offsetX + x * LED_SIZE;
@@ -275,37 +317,33 @@ void drawLEDPixel(int x, int y, bool lit) {
   
   if (displayStyle == 0) {
     // ========== DEFAULT STYLE: Solid square blocks ==========
-    uint16_t color = lit ? ledOnColor : BG_COLOR;  // Off LEDs are BLACK
+    uint16_t color = lit ? ledOnColor : BG_COLOR;
     tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, color);
   } 
   else {
     // ========== REALISTIC STYLE: Circular LED with surround ==========
-    // Enhanced for authenticity matching real MAX7219 hardware
+    int center = LED_SIZE / 2;
+    int ledRadius = (LED_SIZE - 2) / 2;  // Leave 1px border
     
     if (!lit) {
-      // OFF LED: Show dark circle (visible but dim, like real hardware)
-      // Real LEDs are visible even when off - dark red/gray circle
-      
-      // Fill background black
+      // OFF LED: Show dark circle
       tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, BG_COLOR);
       
-      // Draw subtle dark circle for off LED (visible against black)
-      // Using darker version of surround color for off LED housing
-      uint16_t offHousing = dimRGB565(ledSurroundColor, 7);  // Very dim (1/8 brightness)
-      uint16_t offLED = 0x1800;  // Very dark red (barely visible)
+      uint16_t offHousing = dimRGB565(ledSurroundColor, 7);
+      uint16_t offLED = 0x1800;  // Very dark red
       
-      for (int py = 1; py < 9; py++) {
-        for (int px = 1; px < 9; px++) {
-          int cx = px - 1;
-          int cy = py - 1;
-          int dx = (cx * 2 - 7);
-          int dy = (cy * 2 - 7);
+      for (int py = 1; py < LED_SIZE - 1; py++) {
+        for (int px = 1; px < LED_SIZE - 1; px++) {
+          int dx = (px * 2 - LED_SIZE + 1);
+          int dy = (py * 2 - LED_SIZE + 1);
           int distSq = dx * dx + dy * dy;
+          int threshInner = (LED_SIZE - 4) * (LED_SIZE - 4);
+          int threshOuter = (LED_SIZE - 2) * (LED_SIZE - 2);
           
-          if (distSq <= 42) {  // Inner dark circle
+          if (distSq <= threshInner) {
             tft.drawPixel(screenX + px, screenY + py, offLED);
           }
-          else if (distSq <= 58) {  // Dim surround
+          else if (distSq <= threshOuter) {
             tft.drawPixel(screenX + px, screenY + py, offHousing);
           }
         }
@@ -313,35 +351,29 @@ void drawLEDPixel(int x, int y, bool lit) {
     }
     else {
       // LIT LED: Draw bright circular LED with surround
-      // Fill background with surround color first
       tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, ledSurroundColor);
 
-      // Draw from outside in for better circular appearance
-      for (int py = 0; py < 10; py++) {
-        for (int px = 0; px < 10; px++) {
-          int cx = px;
-          int cy = py;
-          int dx = (cx * 2 - 9);
-          int dy = (cy * 2 - 9);
+      for (int py = 0; py < LED_SIZE; py++) {
+        for (int px = 0; px < LED_SIZE; px++) {
+          int dx = (px * 2 - LED_SIZE + 1);
+          int dy = (py * 2 - LED_SIZE + 1);
           int distSq = dx * dx + dy * dy;
 
           uint16_t pixelColor;
+          int threshCore = (LED_SIZE - 6) * (LED_SIZE - 6);
+          int threshBody = (LED_SIZE - 2) * (LED_SIZE - 2);
+          int threshSurround = LED_SIZE * LED_SIZE;
 
-          // Redesigned for better visibility of surround
-          if (distSq <= 18) {
-            // Bright center (core)
+          if (distSq <= threshCore) {
             pixelColor = ledOnColor;
           }
-          else if (distSq <= 38) {
-            // Main LED body (still bright)
+          else if (distSq <= threshBody) {
             pixelColor = ledOnColor;
           }
-          else if (distSq <= 62) {
-            // Surround/bezel ring (use full surround color, not dimmed)
+          else if (distSq <= threshSurround) {
             pixelColor = ledSurroundColor;
           }
           else {
-            // Outside circle: black
             pixelColor = BG_COLOR;
           }
 
@@ -353,27 +385,20 @@ void drawLEDPixel(int x, int y, bool lit) {
 }
 
 void refreshAll() {
-  // The buffer is organized as scr[x + y * LINE_WIDTH] where each byte = 8 vertical pixels
-  // We have 2 rows of matrices, so we need to handle 16 pixels vertically
-  
   #if FAST_REFRESH
-    // Static buffer to track previous state for change detection
     static byte lastScr[LINE_WIDTH * DISPLAY_ROWS] = {0};
     static bool firstRun = true;
     
-    // Check if external force refresh was requested
     if (forceFullRedraw) {
-      // Clear the tracking buffer to force everything to redraw
       for (int i = 0; i < LINE_WIDTH * DISPLAY_ROWS; i++) {
-        lastScr[i] = 0xFF;  // Set to invalid state
+        lastScr[i] = 0xFF;
       }
-      forceFullRedraw = false;  // Clear the flag
-      firstRun = true;  // Treat as first run
+      forceFullRedraw = false;
+      firstRun = true;
       DEBUG(Serial.println("FAST_REFRESH cache cleared - forcing full redraw"));
     }
   #endif
   
-  // Process both rows of matrices (0-7 pixels and 8-15 pixels)
   for (int row = 0; row < DISPLAY_ROWS; row++) {
     for (int displayX = 0; displayX < LINE_WIDTH; displayX++) {
       int bufferIndex = displayX + row * LINE_WIDTH;
@@ -382,14 +407,12 @@ void refreshAll() {
         byte pixelByte = scr[bufferIndex];
         
         #if FAST_REFRESH
-          // Only redraw if changed or first run
           if (firstRun || pixelByte != lastScr[bufferIndex]) {
             lastScr[bufferIndex] = pixelByte;
         #endif
             
-            // Each bit in pixelByte represents a vertical pixel (0-7)
             for (int bitPos = 0; bitPos < 8; bitPos++) {
-              int displayY = row * 8 + bitPos;  // Calculate actual Y position (0-15)
+              int displayY = row * 8 + bitPos;
               bool lit = (pixelByte & (1 << bitPos)) != 0;
               
               drawLEDPixel(displayX, displayY, lit);
@@ -438,11 +461,10 @@ int charWidth(char c, const uint8_t* font) {
   return pgm_read_byte(font + offset);
 }
 
-// Forward declaration
 int drawCharWithY(int x, int yPos, char c, const uint8_t* font);
 
 int drawChar(int x, char c, const uint8_t* font) {
-  return drawCharWithY(x, 0, c, font);  // Default to yPos=0 (top row)
+  return drawCharWithY(x, 0, c, font);
 }
 
 int drawCharWithY(int x, int yPos, char c, const uint8_t* font) {
@@ -489,22 +511,64 @@ int stringWidth(const char* str, const uint8_t* font) {
 
 void showMessage(const char* msg) {
   if (msg == NULL || strlen(msg) == 0) return;
-  
+
   clearScreen();
-  delay(10); // Small delay after clearing
-  
+  delay(10);
+
   int width = stringWidth(msg, font3x7);
   int x = (TOTAL_WIDTH - width) / 2;
-  
-  // Ensure x is within valid range
+
   if (x < 0) x = 0;
   if (x >= TOTAL_WIDTH) x = TOTAL_WIDTH - 1;
-  
+
   while (*msg) {
     x += drawChar(x, *msg++, font3x7) + 1;
   }
-  
-  delay(10); // Small delay before refresh
+
+  delay(10);
+  refreshAll();
+}
+
+void showIPAddress(const char* ip) {
+  if (ip == NULL || strlen(ip) == 0) return;
+
+  clearScreen();
+  delay(10);
+
+  // Split IP address at the second dot
+  // Example: "192.168.1.123" -> "IP: 192.168." (top) and "1.123" (bottom)
+  String ipStr = String(ip);
+  int secondDot = ipStr.indexOf('.', ipStr.indexOf('.') + 1);
+
+  if (secondDot > 0) {
+    String topLine = "IP:" + ipStr.substring(0, secondDot) + ".";
+    String bottomLine = ipStr.substring(secondDot + 1);
+
+    // Display top line (IP: first two octets with trailing dot)
+    int topX = 0;  // Left-aligned
+    const char* topMsg = topLine.c_str();
+    while (*topMsg) {
+      topX += drawCharWithY(topX, 0, *topMsg++, font3x7) + 1;
+    }
+
+    // Display bottom line (last two octets)
+    int bottomX = 0;  // Left-aligned
+    const char* bottomMsg = bottomLine.c_str();
+    while (*bottomMsg) {
+      bottomX += drawCharWithY(bottomX, 1, *bottomMsg++, font3x7) + 1;
+    }
+  } else {
+    // Fallback to single line if split fails
+    String fallback = "IP:" + String(ip);
+    int x = 0;  // Left-aligned
+
+    const char* msg = fallback.c_str();
+    while (*msg) {
+      x += drawChar(x, *msg++, font3x7) + 1;
+    }
+  }
+
+  delay(10);
   refreshAll();
 }
 
@@ -514,62 +578,54 @@ void displayTimeAndTemp() {
   clearScreen();
   
   char buf[32];
-  bool showDots = (seconds % 2) == 0;  // Blink colon every second
+  bool showDots = (seconds % 2) == 0;
   
-  // Top row (yPos = 0): Time - optimized to fit in 32 pixels
-  // Use tighter spacing to fit everything
-  int x = 0;  // Start at very left edge
-  
-  // Determine display hours and whether to show seconds
+  int x = 0;
   int displayHours = use24HourFormat ? hours24 : hours;
-  bool canShowSeconds = true;  // Assume we can show seconds
+  bool canShowSeconds = true;
   
-  // In 24-hour mode with hours >= 10, we need more space
-  // Example: "23:45:12" needs more pixels than "9:45:12"
   if (use24HourFormat && hours24 >= 10) {
-    canShowSeconds = false;  // Not enough room for seconds in 24-hour mode
+    canShowSeconds = false;
   }
   
-  // Hours (1-2 digits)
+  // Hours
   sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
-    if (*(p+1)) x++;  // Add spacing only between digits (saves space)
+    if (*(p+1)) x++;
   }
   
-  // Colon (or space if not showing)
+  // Colon
   if (showDots) {
     x += drawCharWithY(x, 0, ':', digits5x8rn);
-    x += 1;  // Spacing after colon when showing
+    x += 1;
   } else {
-    x += 2;  // Reserve colon width when hidden (NOT 6 - that's too much!)
+    x += 2;
   }
   
-  // Minutes (always 2 digits)
+  // Minutes
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
-    if (*(p+1)) x++;  // Add spacing only between digits (saves space)
+    if (*(p+1)) x++;
   }
   
-  // Seconds (2 digits in smaller font) - only if there's room
+  // Seconds
   if (canShowSeconds) {
-    // Small gap before seconds
     x++;
-    
     sprintf(buf, "%02d", seconds);
-    if (x + 7 <= LINE_WIDTH) {  // Check if seconds will fit (3px*2 + 1 spacing = 7px)
+    if (x + 7 <= LINE_WIDTH) {
       for (const char* p = buf; *p; p++) {
-        if (x < LINE_WIDTH - 3) {  // Ensure char fits
+        if (x < LINE_WIDTH - 3) {
           x += drawCharWithY(x, 0, *p, digits3x5);
-          if (*(p+1) && x < LINE_WIDTH) x++;  // Add spacing if room
+          if (*(p+1) && x < LINE_WIDTH) x++;
         }
       }
     }
   }
   
-  // Bottom row (yPos = 1): Temperature and Humidity
-  x = 0;  // Start at left
+  // Bottom row: Temperature and Humidity
+  x = 0;
   if (sensorAvailable) {
     int displayTemp = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
     char tempUnit = useFahrenheit ? 'F' : 'C';
@@ -579,18 +635,11 @@ void displayTimeAndTemp() {
   }
   
   for (const char* p = buf; *p; p++) {
-    if (x < LINE_WIDTH - 3) {  // Ensure character fits
+    if (x < LINE_WIDTH - 3) {
       x += drawCharWithY(x, 1, *p, font3x7);
       if (*(p+1) && x < LINE_WIDTH) x++;
     }
   }
-  
-  // NOTE: Bottom line shift disabled - causes visual artifacts on TFT
-  // This was from original MAX7219 code but looks wrong on TFT display
-  // Uncomment if you want the original behavior:
-  // for (int i = 0; i < LINE_WIDTH; i++) {
-  //   scr[LINE_WIDTH + i] <<= 1;
-  // }
 }
 
 void displayTimeLarge() {
@@ -599,44 +648,37 @@ void displayTimeLarge() {
   char buf[32];
   bool showDots = (seconds % 2) == 0;
   
-  // Determine display hours based on format
   int displayHours = use24HourFormat ? hours24 : hours;
-  
-  // Large time display on top row using 16-pixel tall font
-  // Start position depends on whether hours is 1 or 2 digits
   int x = (displayHours > 9) ? 0 : 3;
   
   // Draw hours
   sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x16rn);
-    if (*(p+1)) x++;  // Spacing between hour digits only
+    if (*(p+1)) x++;
   }
   
-  // Draw colon - reserve same total space whether showing or not
+  // Draw colon
   if (showDots) {
     x += drawCharWithY(x, 0, ':', digits5x16rn);
-    // No spacing after colon in large mode (tight layout)
   } else {
-    x += 1;  // Reserve colon width when not showing
+    x += 1;
   }
   
-  // Draw minutes - NO extra spacing before, tight to colon
+  // Draw minutes
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x16rn);
-    if (*(p+1)) x++;  // Spacing between minute digits only
+    if (*(p+1)) x++;
   }
   
-  // Add small gap before seconds
+  // Add seconds in small font
   x++;
-  
-  // Draw seconds in small font
   sprintf(buf, "%02d", seconds);
   for (const char* p = buf; *p; p++) {
-    if (x < LINE_WIDTH - 3) {  // Check if room remains
+    if (x < LINE_WIDTH - 3) {
       x += drawCharWithY(x, 0, *p, font3x7);
-      if (*(p+1) && x < LINE_WIDTH - 3) x++;  // Spacing between second digits if room
+      if (*(p+1) && x < LINE_WIDTH - 3) x++;
     }
   }
 }
@@ -647,37 +689,36 @@ void displayTimeAndDate() {
   char buf[32];
   bool showDots = (seconds % 2) == 0;
   
-  // Determine display hours based on format
   int displayHours = use24HourFormat ? hours24 : hours;
   
   // Top row: Time
   int x = 0;
-  sprintf(buf, "%d", displayHours);  // No leading zero
+  sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
-    if (*(p+1)) x++;  // Spacing only between digits (saves space)
+    if (*(p+1)) x++;
   }
   
   if (showDots) {
     x += drawCharWithY(x, 0, ':', digits5x8rn);
-    x += 1;  // Spacing after colon when showing
+    x += 1;
   } else {
-    x += 2;  // Reserve colon width when hidden
+    x += 2;
   }
   
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
-    if (*(p+1)) x++;  // Spacing only between digits (saves space)
+    if (*(p+1)) x++;
   }
   
-  // Add seconds in small font
-  x++;  // Small gap before seconds
+  // Add seconds
+  x++;
   sprintf(buf, "%02d", seconds);
   for (const char* p = buf; *p; p++) {
-    if (x < LINE_WIDTH - 3) {  // Check if room remains
+    if (x < LINE_WIDTH - 3) {
       x += drawCharWithY(x, 0, *p, digits3x5);
-      if (*(p+1) && x < LINE_WIDTH - 3) x++;  // Spacing between second digits if room
+      if (*(p+1) && x < LINE_WIDTH - 3) x++;
     }
   }
   
@@ -687,11 +728,6 @@ void displayTimeAndDate() {
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 1, *p, font3x7) + 1;
   }
-  
-  // NOTE: Bottom line shift disabled - causes visual artifacts on TFT
-  // for (int i = 0; i < LINE_WIDTH; i++) {
-  //   scr[LINE_WIDTH + i] <<= 1;
-  // }
 }
 
 // ======================== SENSOR FUNCTIONS ========================
@@ -751,7 +787,8 @@ void updateSensorData() {
 void syncNTP() {
   DEBUG(Serial.println("Syncing time with NTP..."));
   
-  configTime(timezones[currentTimezone].tzString, "pool.ntp.org", "time.nist.gov");
+  // ESP32 uses configTzTime instead of configTime with TZ string
+  configTzTime(timezones[currentTimezone].tzString, "pool.ntp.org", "time.nist.gov");
   
   time_t now = time(nullptr);
   int attempts = 0;
@@ -777,8 +814,13 @@ void syncNTP() {
     DEBUG(Serial.printf("Time synced: %02d:%02d:%02d %02d/%02d/%d (TZ: %s)\n",
                         hours24, minutes, seconds, day, month, year,
                         timezones[currentTimezone].name));
+    
+    // Flash green LED on successful sync
+    flashRGBLed(0, 1, 0);
   } else {
     DEBUG(Serial.println("NTP sync failed"));
+    // Flash red LED on failed sync
+    flashRGBLed(1, 0, 0);
   }
 }
 
@@ -826,7 +868,7 @@ void setupWebServer() {
     String html = "<!DOCTYPE html><html><head>";
     html += "<meta charset='UTF-8'>";
     html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-    html += "<title>TFT LED Clock</title>";
+    html += "<title>CYD LED Clock</title>";
     html += "<style>";
     html += "*{box-sizing:border-box;}";
     html += "body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:15px;background:#1a1a1a;color:#fff;max-width:1200px;margin:0 auto;}";
@@ -857,9 +899,6 @@ void setupWebServer() {
     html += "body{padding:10px;}";
     html += ".time-display,.environment,.card{padding:15px;}";
     html += "}";
-    html += "@media(min-width:769px) and (max-width:1024px){";
-    html += ".env-grid{grid-template-columns:repeat(3,1fr);}";
-    html += "}";
     // TFT Display Mirror styles
     html += ".tft-mirror{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,3vw,25px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;text-align:center;}";
     html += ".tft-mirror h2{color:#aaa;border-bottom:2px solid #E91E63;padding-bottom:5px;font-size:clamp(16px,4vw,18px);font-weight:500;margin-top:0;text-align:left;}";
@@ -888,7 +927,7 @@ void setupWebServer() {
     html += "setInterval(updateTime,1000);";
     html += "setTimeout(updateTime,100);";
     // TFT Display Mirror - Canvas rendering functions
-    html += "var tftCanvas,tftCtx,ledSize=10,gapSize=4;";
+    html += "var tftCanvas,tftCtx,ledSize=9,gapSize=4;";
     html += "function rgb565ToHex(c){var r=((c>>11)&0x1F)*8,g=((c>>5)&0x3F)*4,b=(c&0x1F)*8;return'rgb('+r+','+g+','+b+')';}";
     html += "function dimColor(r,g,b,f){return'rgb('+Math.floor(r/f)+','+Math.floor(g/f)+','+Math.floor(b/f)+')';}";
     html += "function initCanvas(){";
@@ -939,27 +978,23 @@ void setupWebServer() {
     html += "setTimeout(function(){initCanvas();updateDisplay();},200);";
     html += "</script>";
     html += "</head><body>";
-    html += "<div class='header'><h1>TFT LED Matrix Clock</h1></div>";
+    html += "<div class='header'><h1>ESP32 CYD LED Matrix Clock</h1></div>";
 
     html += "<div class='time-display'>";
     html += "<h2>Current Time & Environment</h2>";
-    html += "<div class='clock' id='clock'>" + String(hours24) + ":" + String(minutes < 10 ? "0" : "") + String(minutes) + ":" + String(seconds < 10 ? "0" : "") + String(seconds) + "</div>";
-    html += "<div class='date' id='date'>" + String(day < 10 ? "0" : "") + String(day) + "/" + String(month < 10 ? "0" : "") + String(month) + "/" + String(year) + "</div>";
+    html += "<div class='clock' id='clock'>--:--:--</div>";
+    html += "<div class='date' id='date'>--/--/----</div>";
     html += "</div>";
 
-    // TFT Display Mirror Section
     html += "<div class='tft-mirror'>";
-    html += "<h2>📺 TFT Display Mirror</h2>";
-    html += "<div class='canvas-container'>";
-    html += "<canvas id='tftCanvas'></canvas>";
-    html += "</div>";
+    html += "<h2>TFT Display Mirror</h2>";
+    html += "<div class='canvas-container'><canvas id='tftCanvas'></canvas></div>";
     html += "<p class='tft-label'>Live display - Updates every 500ms | 32×16 LED Matrix</p>";
     html += "</div>";
 
     if (sensorAvailable) {
       int tempDisplay = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
 
-      // Determine temperature icon based on temperature (Celsius for logic)
       String tempIcon = "🌡️";
       String tempColor = "#FFA500";
       if (temperature >= 30) {
@@ -985,7 +1020,6 @@ void setupWebServer() {
         tempColor = "#00CED1";
       }
 
-      // Determine humidity icon and color
       String humidityIcon = "💧";
       String humidityColor = "#4A90E2";
       if (humidity >= 70) {
@@ -999,21 +1033,18 @@ void setupWebServer() {
       html += "<div class='environment'>";
       html += "<div class='env-grid'>";
 
-      // Temperature
       html += "<div class='env-item'>";
       html += "<span class='env-icon'>" + tempIcon + "</span>";
       html += "<div class='env-value' style='color:" + tempColor + ";text-shadow:0 0 20px " + tempColor + "44;'>" + String(tempDisplay) + (useFahrenheit ? "°F" : "°C") + "</div>";
       html += "<div class='env-label'>Temperature</div>";
       html += "</div>";
 
-      // Humidity
       html += "<div class='env-item'>";
       html += "<span class='env-icon'>" + humidityIcon + "</span>";
       html += "<div class='env-value' style='color:" + humidityColor + ";text-shadow:0 0 20px " + humidityColor + "44;'>" + String(humidity) + "%</div>";
       html += "<div class='env-label'>Humidity</div>";
       html += "</div>";
 
-      // Pressure
       html += "<div class='env-item'>";
       html += "<span class='env-icon'>🌍</span>";
       html += "<div class='env-value' style='color:#9370DB;text-shadow:0 0 20px #9370DB44;'>" + String(pressure) + "</div>";
@@ -1069,13 +1100,15 @@ void setupWebServer() {
     html += "<p>Time Format: " + String(use24HourFormat ? "24-Hour" : "12-Hour") + "</p>";
     html += "<button onclick=\"location.href='/timeformat?mode=toggle'\">Toggle 12/24 Hour</button>";
     if (use24HourFormat) {
-      html += "<p style='color:#666;font-size:12px;margin-top:10px;'>⚠️ Note: In Time+Temp mode, seconds not displayed when hours ≥ 10 due to space constraints</p>";
+      html += "<p style='color:#666;font-size:12px;margin-top:10px;'>⚠️ Note: In Time+Temp mode, seconds not displayed when hours ≥ 10</p>";
     }
     html += "</div>";
     
     html += "<div class='card'><h2>System</h2>";
+    html += "<p>Board: ESP32 CYD (ESP32-2432S028R)</p>";
     html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
     html += "<p>Uptime: " + String(millis() / 1000) + "s</p>";
+    html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
     html += "<button onclick=\"if(confirm('Reset WiFi?'))location.href='/reset'\">Reset WiFi</button>";
     html += "</div>";
     
@@ -1092,97 +1125,65 @@ void setupWebServer() {
     server.send(200, "application/json", json);
   });
   
-  // Display buffer API endpoint - returns 64-byte screen buffer and display settings
-  // This enables real-time TFT display mirroring on the web page with minimal overhead
+  // Display buffer API endpoint
   server.on("/api/display", []() {
     String json = "{\"buffer\":[";
     for (int i = 0; i < LINE_WIDTH * DISPLAY_ROWS; i++) {
       json += String(scr[i]);
       if (i < LINE_WIDTH * DISPLAY_ROWS - 1) json += ",";
     }
-    json += "],\"style\":" + String(displayStyle);
+    json += "],\"width\":" + String(LINE_WIDTH) + ",\"height\":" + String(TOTAL_HEIGHT);
+    json += ",\"style\":" + String(displayStyle);
     json += ",\"ledColor\":" + String(ledOnColor);
-    json += ",\"surroundColor\":" + String(ledSurroundColor);
-    json += ",\"width\":" + String(TOTAL_WIDTH);
-    json += ",\"height\":" + String(TOTAL_HEIGHT);
-    json += "}";
+    json += ",\"surroundColor\":" + String(ledSurroundColor) + "}";
     server.send(200, "application/json", json);
   });
   
-  server.on("/api/status", []() {
-    int tempDisplay = useFahrenheit ? (temperature * 9 / 5 + 32) : temperature;
-    String json = "{\"sensor_available\":" + String(sensorAvailable ? "true" : "false") +
-                  ",\"temperature\":" + String(tempDisplay) +
-                  ",\"humidity\":" + String(humidity) +
-                  ",\"pressure\":" + String(pressure) +
-                  ",\"temp_unit\":\"" + String(useFahrenheit ? "Fahrenheit" : "Celsius") + "\"}";
-    server.send(200, "application/json", json);
-  });
-  
-  // Temperature unit toggle endpoint
+  // Temperature unit toggle
   server.on("/temperature", []() {
-    if (server.hasArg("mode")) {
+    if (server.hasArg("mode") && server.arg("mode") == "toggle") {
       useFahrenheit = !useFahrenheit;
-      DEBUG(Serial.printf("Temperature unit: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
-
-      // Force immediate display update
-      switch (currentMode) {
-        case 0: displayTimeAndTemp(); break;
-        case 1: displayTimeLarge(); break;
-        case 2: displayTimeAndDate(); break;
-      }
-      refreshAll();
+      DEBUG(Serial.printf("Temperature unit changed to: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
   
-  // Timezone configuration endpoint
+  // Time format toggle
+  server.on("/timeformat", []() {
+    if (server.hasArg("mode") && server.arg("mode") == "toggle") {
+      use24HourFormat = !use24HourFormat;
+      DEBUG(Serial.printf("Time format changed to: %s\n", use24HourFormat ? "24-hour" : "12-hour"));
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+  
+  // Timezone selection
   server.on("/timezone", []() {
     if (server.hasArg("tz")) {
-      int newTimezone = server.arg("tz").toInt();
-      if (newTimezone >= 0 && newTimezone < numTimezones) {
-        currentTimezone = newTimezone;
-        DEBUG(Serial.printf("Timezone changed to: %s\n", timezones[currentTimezone].name));
+      int tz = server.arg("tz").toInt();
+      if (tz >= 0 && tz < numTimezones) {
+        currentTimezone = tz;
         syncNTP();
+        DEBUG(Serial.printf("Timezone changed to: %s\n", timezones[currentTimezone].name));
       }
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
   
-  // Time format (12/24 hour) toggle endpoint
-  server.on("/timeformat", []() {
-    if (server.hasArg("mode")) {
-      use24HourFormat = !use24HourFormat;
-      DEBUG(Serial.printf("Time format changed to: %s\n", use24HourFormat ? "24-Hour" : "12-Hour"));
-
-      // Force immediate display update
-      forceFullRedraw = true;
-      switch (currentMode) {
-        case 0: displayTimeAndTemp(); break;
-        case 1: displayTimeLarge(); break;
-        case 2: displayTimeAndDate(); break;
-      }
-      refreshAll();
-    }
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "");
-  });
-  
-  // Display style configuration endpoint
+  // Style settings
   server.on("/style", []() {
     bool changed = false;
     
-    // Toggle display style
     if (server.hasArg("mode") && server.arg("mode") == "toggle") {
-      displayStyle = (displayStyle == 0) ? 1 : 0;
+      displayStyle = (displayStyle + 1) % 2;
       changed = true;
-      DEBUG(Serial.printf("Display style toggled to: %d (%s)\n", 
+      DEBUG(Serial.printf("Display style changed to: %d (%s)\n", 
                           displayStyle, displayStyle == 0 ? "Default" : "Realistic"));
     }
     
-    // Set LED color
     if (server.hasArg("ledcolor")) {
       int colorIdx = server.arg("ledcolor").toInt();
       switch(colorIdx) {
@@ -1196,10 +1197,8 @@ void setupWebServer() {
         case 7: ledOnColor = COLOR_ORANGE; break;
         default: ledOnColor = COLOR_RED;
       }
-      // Update the off color to be a dim version
-      ledOffColor = ledOnColor >> 3;  // Dim by dividing RGB components
+      ledOffColor = ledOnColor >> 3;
       
-      // If surround is in "Match LED Color" mode, update it too
       if (surroundMatchesLED) {
         ledSurroundColor = ledOnColor;
       }
@@ -1208,7 +1207,6 @@ void setupWebServer() {
       DEBUG(Serial.printf("LED color changed to index: %d\n", colorIdx));
     }
     
-    // Set surround color
     if (server.hasArg("surroundcolor")) {
       int colorIdx = server.arg("surroundcolor").toInt();
       switch(colorIdx) {
@@ -1241,9 +1239,8 @@ void setupWebServer() {
           surroundMatchesLED = false;
           break;
         case 7: 
-          // Match LED color mode
           ledSurroundColor = ledOnColor;
-          surroundMatchesLED = true;  // Track that we're in match mode
+          surroundMatchesLED = true;
           break;
         default: 
           ledSurroundColor = COLOR_WHITE;
@@ -1254,22 +1251,16 @@ void setupWebServer() {
                           colorIdx, surroundMatchesLED ? "ON" : "OFF"));
     }
     
-    // Force a complete redraw if anything changed
     if (changed) {
-      // Clear the entire screen to black
       tft.fillScreen(BG_COLOR);
-      
-      // Set the global flag to force FAST_REFRESH to ignore its cache
       forceFullRedraw = true;
       
-      // Immediately trigger display update with new colors
-      // This ensures instant visual feedback instead of waiting for next second
       switch (currentMode) {
         case 0: displayTimeAndTemp(); break;
         case 1: displayTimeLarge(); break;
         case 2: displayTimeAndDate(); break;
       }
-      refreshAll();  // Draw immediately with new colors
+      refreshAll();
 
       DEBUG(Serial.println("Style changed - immediate redraw complete"));
     }
@@ -1287,8 +1278,21 @@ void setupWebServer() {
     ESP.restart();
   });
   
+  // Handle not found
+  server.onNotFound([]() {
+    server.send(404, "text/plain", "Not Found");
+  });
+  
   server.begin();
-  DEBUG(Serial.println("Web server started"));
+  DEBUG(Serial.println("\n=== Web Server Started ==="));
+  DEBUG(Serial.print("Server running at http://"));
+  DEBUG(Serial.println(WiFi.localIP()));
+  DEBUG(Serial.println("Available endpoints: /, /api/time, /api/display, /temperature, /timezone, /style, /timeformat, /reset"));
+  DEBUG(Serial.println("\nTry accessing the web server from your browser now!"));
+  DEBUG(Serial.println("If you can't connect, check:"));
+  DEBUG(Serial.println("  1. Your device is on the same WiFi network"));
+  DEBUG(Serial.println("  2. Firewall isn't blocking port 80"));
+  DEBUG(Serial.println("  3. Router isn't isolating WiFi clients"));
 }
 
 // ======================== FORWARD DECLARATIONS ========================
@@ -1301,36 +1305,147 @@ void setup() {
   delay(1000);
   
   DEBUG(Serial.println("\n\n╔════════════════════════════════════════╗"));
-  DEBUG(Serial.println("║   ESP8266 TFT Matrix Clock v1.0        ║"));
-  DEBUG(Serial.println("║   TFT Display Edition                  ║"));
+  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.0      ║"));
+  DEBUG(Serial.println("║   Cheap Yellow Display Edition         ║"));
   DEBUG(Serial.println("╚════════════════════════════════════════╝\n"));
+
+  // Initialize boot button
+  pinMode(BOOT_BTN_PIN, INPUT_PULLUP);
+
+  // Initialize RGB LED pins
+  pinMode(LED_R_PIN, OUTPUT);
+  pinMode(LED_G_PIN, OUTPUT);
+  pinMode(LED_B_PIN, OUTPUT);
+  setRGBLed(false, false, false);  // All off initially
+
+  // Check if BOOT button is pressed during startup to reset WiFi
+  bool resetWiFi = false;
+  if (digitalRead(BOOT_BTN_PIN) == LOW) {
+    DEBUG(Serial.println("\n⚠️  BOOT button pressed - checking for WiFi reset..."));
+    setRGBLed(1, 1, 0);  // Yellow LED to indicate button detected
+
+    // Wait for button to be held for 3 seconds
+    unsigned long pressStart = millis();
+    while (digitalRead(BOOT_BTN_PIN) == LOW && (millis() - pressStart) < 3000) {
+      delay(100);
+    }
+
+    if (millis() - pressStart >= 3000) {
+      resetWiFi = true;
+      DEBUG(Serial.println("✓ BOOT button held for 3 seconds - WiFi will be reset!"));
+      setRGBLed(1, 0, 0);  // Red LED
+      delay(500);
+    } else {
+      DEBUG(Serial.println("✗ Button released too early - WiFi will not be reset"));
+      setRGBLed(false, false, false);
+    }
+  }
+
+  // Flash blue to indicate startup
+  flashRGBLed(0, 0, 1, 500);
   
   // Initialize TFT display
   initTFT();
 
   showMessage("INIT");
 
+  // Show reset WiFi message if button was held
+  if (resetWiFi) {
+    delay(500);
+    showMessage("RESET");
+    delay(500);
+    showMessage("WIFI");
+    delay(1000);
+  }
+  
   // Test sensor
   sensorAvailable = testSensor();
   if (sensorAvailable) {
     updateSensorData();
+    // Flash green if sensor found
+    flashRGBLed(0, 1, 0);
+  } else {
+    // Flash yellow (red+green) if no sensor
+    flashRGBLed(1, 1, 0);
   }
   
   // WiFi setup
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setTimeout(180);
+
+  // Reset WiFi if button was held during boot
+  if (resetWiFi) {
+    DEBUG(Serial.println("\n🔄 Resetting WiFi credentials..."));
+    showMessage("WIFI RST");
+    wifiManager.resetSettings();
+    delay(1000);
+    DEBUG(Serial.println("✓ WiFi credentials cleared!"));
+  }
+
+  showMessage("WIFI");
+  // Set LED to blue during WiFi connection
+  setRGBLed(0, 0, 1);
   
-  if (!wifiManager.autoConnect("TFT_Clock_Setup")) {
+  if (!wifiManager.autoConnect("CYD_Clock_Setup")) {
     DEBUG(Serial.println("Failed to connect, restarting..."));
-    delay(3000);
+    // Flash red on failure
+    for (int i = 0; i < 5; i++) {
+      flashRGBLed(1, 0, 0, 200);
+      delay(200);
+    }
     ESP.restart();
   }
   
-  DEBUG(Serial.printf("Connected! IP: %s\n", WiFi.localIP().toString().c_str()));
+  setRGBLed(false, false, false);  // Turn off LED
+
+  // Ensure we're in station mode after WiFiManager
+  WiFi.mode(WIFI_STA);
+
+  // Wait a moment for WiFi to stabilize
+  delay(500);
+
+  // Verify connection stability
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 10) {
+    delay(500);
+    retries++;
+    DEBUG(Serial.print("."));
+  }
+  DEBUG(Serial.println());
+
+  if (WiFi.status() != WL_CONNECTED) {
+    DEBUG(Serial.println("WiFi connection lost! Restarting..."));
+    ESP.restart();
+  }
+
+  DEBUG(Serial.println("\n=== WiFi Connected ==="));
+  DEBUG(Serial.print("SSID: "));
+  DEBUG(Serial.println(WiFi.SSID()));
+  DEBUG(Serial.print("IP Address: "));
+  DEBUG(Serial.println(WiFi.localIP()));
+  DEBUG(Serial.print("Gateway: "));
+  DEBUG(Serial.println(WiFi.gatewayIP()));
+  DEBUG(Serial.print("Subnet Mask: "));
+  DEBUG(Serial.println(WiFi.subnetMask()));
+  DEBUG(Serial.print("DNS: "));
+  DEBUG(Serial.println(WiFi.dnsIP()));
+  DEBUG(Serial.print("Signal Strength (RSSI): "));
+  DEBUG(Serial.print(WiFi.RSSI()));
+  DEBUG(Serial.println(" dBm"));
+  DEBUG(Serial.print("WiFi Mode: "));
+  DEBUG(Serial.println(WiFi.getMode() == WIFI_STA ? "STA" : "Other"));
+
   showMessage("WIFI OK");
+  flashRGBLed(0, 1, 0);  // Green flash for success
   delay(1000);
+
+  // Display IP address split across two rows
+  String ipStr = WiFi.localIP().toString();
+  showIPAddress(ipStr.c_str());
+  delay(2500);  // Pause for 2.5 seconds to allow user to see IP address
   
   // Sync time
+  showMessage("NTP");
   syncNTP();
   showMessage("TIME OK");
   delay(1000);
@@ -1354,7 +1469,9 @@ void setup() {
 // ======================== MAIN LOOP ========================
 
 void loop() {
+  // Handle web server clients - this is critical for ESP32
   server.handleClient();
+  yield();  // Allow background tasks to run
   
   unsigned long now = millis();
   
@@ -1375,21 +1492,39 @@ void loop() {
   
   // Print status
   if (now - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-    DEBUG(Serial.printf("Time: %02d:%02d | Date: %02d/%02d/%04d | Temp: %d°C | Hum: %d%% | Pressure: %d hPa\n",
-                        hours24, minutes, day, month, year, temperature, humidity, pressure));
+    DEBUG(Serial.printf("Time: %02d:%02d | Date: %02d/%02d/%04d | Temp: %d°C | Hum: %d%% | Heap: %d\n",
+                        hours24, minutes, day, month, year, temperature, humidity, ESP.getFreeHeap()));
+    DEBUG(Serial.printf("WiFi Status: %s | IP: %s | RSSI: %d dBm\n",
+                        WiFi.status() == WL_CONNECTED ? "Connected" : "DISCONNECTED",
+                        WiFi.localIP().toString().c_str(),
+                        WiFi.RSSI()));
     lastStatusPrint = now;
   }
+
+  // Check WiFi connection and reconnect if needed
+  if (WiFi.status() != WL_CONNECTED) {
+    DEBUG(Serial.println("WiFi disconnected! Attempting to reconnect..."));
+    WiFi.reconnect();
+    delay(5000);
+    if (WiFi.status() != WL_CONNECTED) {
+      DEBUG(Serial.println("Reconnection failed. Restarting..."));
+      ESP.restart();
+    }
+  }
   
-  delay(100);
+  delay(1);  // Minimal delay - ESP32 handles this well
 }
 
 // ======================== HELPER FUNCTIONS ========================
 
 void configModeCallback(WiFiManager* myWiFiManager) {
   DEBUG(Serial.println("\n=== WiFi Config Mode ==="));
-  DEBUG(Serial.println("Connect to AP: TFT_Clock_Setup"));
+  DEBUG(Serial.println("Connect to AP: CYD_Clock_Setup"));
   DEBUG(Serial.print("Config portal IP: "));
   DEBUG(Serial.println(WiFi.softAPIP()));
+  
+  // Set LED to purple (red+blue) for config mode
+  setRGBLed(1, 0, 1);
   
   showMessage("SETUP AP");
 }
