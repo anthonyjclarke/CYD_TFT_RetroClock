@@ -1,728 +1,306 @@
-# ESP8266 TFT LED Matrix Clock
+# ESP32 CYD TFT Matrix Clock
 
-A refactored version of the ESP8266 LED Matrix Clock that uses SPI TFT displays (ILI9341/ST7789) to **simulate** the appearance of MAX7219 LED matrix modules with **realistic circular LED rendering**.
-All functionality from the original LED matrix version is preserved and enhanced. (https://github.com/anthonyjclarke/ESP_LEDMatrix_32x16_NTP_Clock)
+A retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display (CYD) board.
+
+## Hardware
+
+### Board: ESP32-2432S028R (Cheap Yellow Display)
+
+The CYD is an affordable ESP32 development board with integrated:
+- 2.8" ILI9341 TFT display (320x240 pixels)
+- XPT2046 resistive touchscreen
+- RGB LED (active low)
+- SD card slot
+- Extended GPIO connector
+
+### Pin Configuration
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| **TFT Display (HSPI)** | | |
+| MOSI | 13 | Data out |
+| MISO | 12 | Data in (not used) |
+| CLK | 14 | SPI clock |
+| CS | 15 | Chip select |
+| DC | 2 | Data/Command |
+| RST | -1 | Connected to EN |
+| Backlight | 21 | HIGH = on |
+| **RGB LED** | | Active LOW |
+| Red | 4 | |
+| Green | 16 | |
+| Blue | 17 | |
+| **Boot Button** | 0 | Built-in, active LOW |
+| **I2C (Extended GPIO)** | | For BME280 sensor |
+| SDA | 27 | Via CN1 connector |
+| SCL | 22 | Via CN1 connector |
+| **Touchscreen (VSPI)** | | Not used in this project |
+| T_IRQ | 36 | |
+| T_DIN | 32 | |
+| T_OUT | 39 | |
+| T_CLK | 25 | |
+| T_CS | 33 | |
 
 ## Features
 
-- 🎨 **Realistic LED Matrix Simulation** - Two display styles:
-  - **Default**: Fast solid blocks
-  - **Realistic**: Circular LEDs with customizable surrounds matching real MAX7219 hardware
-- ⏰ **Three Display Modes**: Time+Temperature, Large Time, Time+Date (all with seconds)
-- 🕐 **12/24 Hour Format**: Toggle between formats via web interface
-- 🌡️ **BME280 Sensor Integration**: Temperature, humidity, and pressure readings
-- 📡 **WiFi Manager**: Easy setup without hardcoded credentials
-- 🌍 **NTP Time Sync**: Automatic time synchronization with 88 timezone options
-- 🌐 **Modern Responsive Web Interface**:
-  - Live-updating clock (refreshes every second)
-  - Dynamic weather icons based on temperature
-  - Mobile/tablet/desktop responsive design
-  - Dark theme with glowing effects
-- 🎨 **Customizable Colors**: 8 LED colors and 8 surround colors (including "Match LED Color")
-- ⚡ **Instant Refresh**: Style and color changes apply immediately
-
-## Display Simulation
-
-### Realistic LED Style
-The TFT display renders authentic-looking circular LEDs to replicate real MAX7219 hardware:
-- **Circular LED pixels** with customizable colors (8 color options)
-- **Visible off LEDs** as dark circles (like real hardware)
-- **Prominent surround/bezel rings** (8 options including matching LED color)
-- **Authentic 4-pixel gap** between matrix rows
-- **Full-brightness surrounds** for clear color distinction and visibility
-- **Proper color dimming** that preserves hue in RGB565 format
-- **Optimized rendering** with wider bezel rings for better appearance
-
-### Display Styles
-**Default Style (Fast):**
-- Solid square LED blocks
-- Fastest rendering (~20ms updates)
-- Clean, modern appearance
-
-**Realistic Style (Authentic):**
-- Circular LEDs with surround bezels
-- Matches real MAX7219 appearance
-- Visible grid structure even when LEDs are off
-- Slower rendering (~300-400ms) but 6-8× faster than original
-
-## Hardware Requirements
-
-### Required Components
-
-1. **ESP8266 Development Board**
-   - D1 Mini, NodeMCU, or similar
-   - Minimum 80KB RAM
-
-2. **TFT Display** (Choose ONE):
-   - 1.8" ILI9341 (240x320) SPI TFT Display
-   - 2.4" ILI9341 (240x320) SPI TFT Display
-   - 2.8" ILI9341 (240x320) SPI TFT Display
-   - 2.4" ST7789 (240x320) SPI TFT Display
-
-3. **BME280 Sensor** (Optional but recommended)
-   - I2C Temperature/Humidity/Pressure sensor
-   - Default address: 0x76 (can be 0x77)
-
-### Components NOT Required (TFT Version)
-- ❌ **PIR Motion Sensor** - Display always on in TFT version
-- ❌ **LDR Light Sensor** - Fixed brightness in TFT version
-
-### Optional Components
-
-- Breadboard or PCB
-- Jumper wires
-- 5V power supply
-
-## Wiring Diagram
-
-### TFT Display (ILI9341/ST7789) - SPI Connection
-
-```
-ESP8266 D1 Mini  →  TFT Display
-─────────────────────────────────
-D1 (GPIO5)       →  CS  (Chip Select)
-D2 (GPIO4)       →  DC  (Data/Command)
-RST or 3.3V      →  RST (Reset) *
-D7 (GPIO13)      →  MOSI/SDA (Data)
-D5 (GPIO14)      →  SCK/SCL (Clock)
-3.3V             →  VCC
-D8 or 3.3V       →  LED (Backlight) **
-GND              →  GND
-
-* Note: TFT RST pin should be connected to ESP8266 RST pin or 3.3V.
-  Software reset is handled via ESP reset (TFT_RST = -1).
-** Note: Backlight can be controlled via D8 (GPIO15) for software on/off control,
-  or hardwired to 3.3V for always-on operation. The current code uses D8 to turn
-  on the backlight at startup. If hardwired to 3.3V, you can remove LED_PIN code.
-```
-
-### BME280 Sensor - I2C Connection
-
-```
-ESP8266 D1 Mini  →  BME280
-────────────────────────────
-D4 (GPIO2)       →  SDA
-D3 (GPIO0)       →  SCL
-3.3V             →  VCC
-GND              →  GND
-```
-
-### Complete Wiring Table
-
-| Component      | Pin Name  | ESP8266 Pin | GPIO | Notes                    |
-|----------------|-----------|-------------|------|--------------------------|
-| **TFT Display**|           |             |      |                          |
-| CS             | TFT_CS    | D1          | 5    | Chip Select              |
-| DC             | TFT_DC    | D2          | 4    | Data/Command             |
-| RST            | TFT_RST   | RST/3.3V    | -1   | Connected to ESP RST     |
-| LED            | LED_PIN   | D8/3.3V     | 15   | Backlight (optional D8)  |
-| MOSI           | MOSI      | D7          | 13   | Hardware SPI             |
-| SCK            | SCK       | D5          | 14   | Hardware SPI             |
-| **BME280**     |           |             |      |                          |
-| SDA            | SDA       | D4          | 2    | I2C Data                 |
-| SCL            | SCL       | D3          | 0    | I2C Clock                |
-
-**Note:** PIR and LDR sensors are NOT used in TFT version.
-**Backlight:** Can be controlled via D8 or hardwired to 3.3V for always-on operation.
-
-## Display Configuration
-
-### Supported Display Types
-
-The code uses TFT_eSPI library which is configured via `User_Setup.h`. The default configuration is for ILI9341 displays. To change display type, edit `.pio/libdeps/d1_mini_pro/TFT_eSPI/User_Setup.h` or the copy in `include/User_Setup.h`:
-
-```cpp
-// Driver selection (default is ILI9341)
-#define ILI9341_DRIVER      // For ILI9341 displays (most common)
-// #define ST7789_DRIVER    // For ST7789 displays
-```
-
-### Display Customization
-
-#### LED Colors (8 Options)
-- Red (default)
-- Green
-- Blue
-- Yellow
-- Cyan
-- Magenta
-- White
-- Orange
-
-#### Surround/Bezel Colors (8 Options)
-- White
-- Light Gray
-- Dark Gray (default - authentic MAX7219 look)
-- Red
-- Green
-- Blue
-- Yellow
-- **Match LED Color** (surrounds match LED color)
-
-#### Display Styles
-- **Default (0)**: Solid square blocks (fastest)
-- **Realistic (1)**: Circular LEDs with surrounds (authentic)
-
-You can adjust these settings via the web interface or modify constants in `main_tft.cpp`:
-
-```cpp
-#define LED_SIZE          10     // Size of each LED (10 pixels for 32-wide display)
-#define DEFAULT_DISPLAY_STYLE 1  // 0=Default, 1=Realistic
-```
-
-### Color Options (RGB565 format)
-
-```cpp
-// Predefined colors:
-#define COLOR_RED         0xF800
-#define COLOR_GREEN       0x07E0
-#define COLOR_BLUE        0x001F
-#define COLOR_YELLOW      0xFFE0
-#define COLOR_CYAN        0x07FF
-#define COLOR_MAGENTA     0xF81F
-#define COLOR_WHITE       0xFFFF
-#define COLOR_ORANGE      0xFD20
-#define COLOR_DARK_GRAY   0x7BEF
-#define COLOR_LIGHT_GRAY  0xC618
-```
-
-## Software Setup
-
-### 1. Install PlatformIO
-
-Install PlatformIO IDE (VS Code extension) or PlatformIO Core:
-- **VS Code**: Install "PlatformIO IDE" extension
-- **Command Line**: `pip install platformio`
-
-### 2. Clone/Download Project
-
-```bash
-git clone <your-repo-url>
-cd tft-led-clock
-```
-
-### 3. Configure Display Type (if needed)
-
-The default configuration is for ILI9341 displays. If you have a different display, edit `include/User_Setup.h`:
-
-```cpp
-#define ILI9341_DRIVER    // Most common 2.4" and 2.8" displays
-// #define ST7789_DRIVER  // Some 1.8" and 2.4" displays
-```
-
-After editing, the library's User_Setup.h will be updated automatically during build.
-
-### 4. Verify Pin Connections
-
-Pin connections are configured in `include/User_Setup.h`:
-
-```cpp
-#define TFT_CS   PIN_D1  // D1 (GPIO5)
-#define TFT_DC   PIN_D2  // D2 (GPIO4)
-#define TFT_RST  -1      // Uses ESP reset (TFT RST connected to ESP RST or 3.3V)
-```
-
-BME280 sensor pins in `main_tft.cpp`:
-```cpp
-#define SDA_PIN   D4    // GPIO2 - I2C Data
-#define SCL_PIN   D3    // GPIO0 - I2C Clock
-```
-
-**Note:** TFT pins (D1, D2) and BME280 pins (D3, D4) are completely separate - no conflicts.
-
-### 5. Build and Upload
-
-Using PlatformIO:
-
-```bash
-# Build the project
-pio run
-
-# Upload to ESP8266
-pio run --target upload
-
-# Monitor serial output
-pio device monitor
-```
-
-Or use the PlatformIO IDE buttons in VS Code.
-
-### 6. Initial WiFi Setup
-
-1. Power on the ESP8266
-2. Look for WiFi network: **TFT_Clock_Setup**
-3. Connect to it with your phone/computer
-4. Browser should auto-open to configuration portal
-5. Select your WiFi network and enter password
-6. Click "Save"
-
-The display will show status messages during setup:
-- `INIT` - Initializing display
-- `WIFI OK` - WiFi connected
-- `TIME OK` - NTP sync successful
-- `READY` - System ready
-
-## Web Interface
-
-After WiFi setup, access the web interface:
-
-```
-http://<esp8266-ip-address>
-```
-
-Find the IP address from:
-- Serial monitor output
-- Your router's DHCP client list
-- mDNS: `http://tft-clock.local` (if mDNS is working)
-
-### Web Interface Features
-
-- **Live Digital Clock Display**:
-  - Large, glowing clock with auto-update every second (no page refresh needed)
-  - Respects 12/24 hour format setting (shows AM/PM in 12-hour mode)
-  - Color-coded date display
-  - Modern dark theme with gradient effects
-
-- **Dynamic Environment Dashboard**:
-  - Temperature with weather emoji icons (changes based on actual temp)
-  - Humidity with condition-based icons
-  - Pressure monitoring
-  - Color-coded values with glowing effects
-  - Responsive grid layout
-
-- **Display Style Controls**:
-  - Toggle between Default/Realistic styles
-  - Select LED color (8 options)
-  - Select surround color (8 options including "Match LED Color")
-  - Instant visual feedback on changes
-
-- **Time Format**: Toggle between 12/24 hour format
-- **Settings**: Toggle temperature unit (°C/°F)
-- **Timezone & Time Format**: 88 timezones + 12/24 hour selection
-- **System Info**: IP address, uptime, WiFi reset
-
-- **Responsive Design**:
-  - Adapts to mobile phones, tablets, and desktops
-  - Touch-friendly buttons and controls
-  - Fluid typography that scales with screen size
+- **Simulated LED Matrix**: Authentic MAX7219-style 4x2 LED matrix appearance
+- **WiFi Manager**: Easy WiFi configuration via captive portal
+  - BOOT button reset (3-second hold during power-up)
+  - Web interface reset option
+  - Automatic config portal on first boot
+- **Network Diagnostics**: Comprehensive WiFi monitoring and auto-reconnect
+- **IP Address Display**: Shows IP on TFT during startup (2.5 seconds)
+- **NTP Time Sync**: Automatic time synchronization with DST support
+- **88 Timezones**: Comprehensive global timezone support
+- **BME280 Sensor**: Optional temperature, humidity, and pressure readings
+- **Web Interface**: Modern responsive control panel with live display mirror
+- **Display Styles**: Default blocks or realistic circular LEDs
+- **8 LED Colors**: Red, Green, Blue, Yellow, Cyan, Magenta, White, Orange
+- **RGB LED Status**: Visual feedback during startup and operation
+- **Serial Diagnostics**: Real-time monitoring at 115200 baud
 
 ## Display Modes
 
-The clock automatically cycles through three display modes every 5 seconds:
+The clock cycles through three display modes every 5 seconds:
 
-### Mode 0: Time + Temperature/Humidity
+1. **Time + Temperature**: Time on top row, temp/humidity on bottom
+2. **Large Time**: Full 16-pixel tall time display
+3. **Time + Date**: Time on top, date on bottom
+
+## Startup Sequence
+
+The TFT display shows the following messages during boot:
+
+1. **"INIT"** - Initializing hardware
+2. **"RESET"** + **"WIFI"** - (Only if BOOT button held) WiFi reset in progress
+3. **"WIFI"** - Connecting to WiFi
+4. **"SETUP AP"** - (If no WiFi saved) Config portal active
+5. **"WIFI OK"** - WiFi connected successfully
+6. **IP address display** - Shows "IP:192.168." (top) and "1.123" (bottom) for 2.5 seconds
+7. **"NTP"** - Syncing time with NTP server
+8. **"TIME OK"** - Time synchronized
+9. **"READY"** - Setup complete, starting clock display
+
+## Installation
+
+### Using PlatformIO (Recommended)
+
+1. Install [PlatformIO](https://platformio.org/install)
+2. Clone or download this project
+3. Open the project folder in VS Code with PlatformIO
+4. Build and upload:
+   ```bash
+   pio run -t upload
+   ```
+5. Monitor serial output:
+   ```bash
+   pio device monitor
+   ```
+
+### Using Arduino IDE
+
+1. Install [ESP32 board support](https://docs.espressif.com/projects/arduino-esp32/en/latest/installing.html)
+2. Install required libraries:
+   - TFT_eSPI by Bodmer
+   - WiFiManager by tzapu
+   - Adafruit BME280 Library
+   - Adafruit Unified Sensor
+3. Copy `User_Setup.h` to your TFT_eSPI library folder (replace existing)
+4. Open `cyd_tft_clock.cpp` and rename to `cyd_tft_clock.ino`
+5. Compile and upload
+
+## WiFi Configuration
+
+### Three Ways to Configure WiFi:
+
+#### 1. **BOOT Button Method** (Recommended for first-time setup)
+1. **Hold the BOOT button** (GPIO 0) while powering on the device
+2. **Keep holding for 3 seconds** until LED turns RED
+3. **Release button** - WiFi credentials will be cleared
+4. Device enters config portal mode
+5. **Connect to "CYD_Clock_Setup"** WiFi network
+6. **Open 192.168.4.1** in a browser
+7. **Enter your WiFi credentials**
+8. Clock will connect and sync time automatically
+
+#### 2. **Web Interface Method**
+1. Access the web interface at `http://<IP_ADDRESS>`
+2. Scroll to **System** section
+3. Click **"Reset WiFi"** button
+4. Device restarts in config portal mode
+5. Connect to "CYD_Clock_Setup" network and reconfigure
+
+#### 3. **Serial Monitor Method** (for development)
+1. Upload code with fresh ESP32 or erased flash
+2. WiFiManager automatically starts config portal
+3. Connect to "CYD_Clock_Setup" network
+4. Configure WiFi credentials
+
+## Web Interface
+
+Once connected, access the web interface at the clock's IP address (displayed on startup):
+
+- **Live Clock Display**: Real-time time and date
+- **TFT Display Mirror**: Canvas-based simulation of the LED matrix
+- **Environment Data**: Temperature, humidity, pressure (if sensor connected)
+- **Settings**:
+  - Toggle °C/°F
+  - Toggle 12/24 hour format
+  - Change timezone (88 options)
+  - Change display style
+  - Change LED color
+  - Change surround color
+- **System Information**:
+  - Board model
+  - IP address
+  - Uptime
+  - Free heap memory
+  - WiFi reset button
+
+## Serial Monitor Diagnostics
+
+Connect at 115200 baud to see detailed diagnostics:
+
+### Startup Information:
+- Device banner and version
+- BOOT button status (WiFi reset detection)
+- TFT display initialization
+- WiFi connection details (SSID, IP, Gateway, DNS, RSSI, Mode)
+- Sensor detection status
+- NTP sync results
+- Web server startup confirmation
+
+### Runtime Monitoring (every 10 seconds):
+- Current time and date
+- Temperature and humidity
+- Free heap memory
+- **WiFi status**: Connection state, IP address, signal strength (RSSI)
+
+### Network Diagnostics:
+The Serial Monitor displays complete network information on connection:
 ```
-10:24 58    ← Time with seconds
-T26C H88%   ← Temperature & Humidity
+=== WiFi Connected ===
+SSID: YourNetworkName
+IP Address: 192.168.1.123
+Gateway: 192.168.1.1
+Subnet Mask: 255.255.255.0
+DNS: 192.168.1.1
+Signal Strength (RSSI): -45 dBm
+WiFi Mode: STA
 ```
-- Shows time with seconds
-- Temperature, humidity on bottom row
-- Seconds hidden in 24-hour mode when hours ≥ 10 (space constraint)
 
-### Mode 1: Large Time
+## Connecting a BME280 Sensor
+
+Connect to the extended GPIO connector (CN1):
+
+| BME280 | CYD Pin |
+|--------|---------|
+| VCC | 3.3V |
+| GND | GND |
+| SDA | GPIO 27 |
+| SCL | GPIO 22 |
+
+The sensor auto-detects at addresses 0x76 or 0x77.
+
+## RGB LED Status Indicators
+
+### During Startup:
+| Color | Meaning |
+|-------|---------|
+| Blue flash | Device startup |
+| Yellow (steady) | BOOT button detected, waiting for 3-second hold |
+| Red (steady) | WiFi reset confirmed (after holding BOOT for 3s) |
+| Blue (steady) | Connecting to WiFi |
+| Purple (steady) | WiFi config portal mode active |
+| Green flash | Success (WiFi connected, NTP synced, sensor found) |
+| Yellow flash | Sensor not found |
+| Red flash | Error/failure |
+
+### During Operation:
+| Event | LED Indicator |
+|-------|---------------|
+| NTP sync success | Green flash |
+| NTP sync failure | Red flash |
+| WiFi disconnected | Red flash + auto-reconnect |
+
+## Project Structure
+
 ```
-10:24 58    ← Large time with seconds
-(empty)     ← Spans both rows
+CYD_TFT_RetroClock/
+├── src/
+│   └── cyd_tft_clock.cpp    # Main application code with WiFi config
+├── include/
+│   ├── User_Setup.h         # TFT_eSPI display configuration for CYD
+│   ├── fonts.h              # LED matrix font definitions (3x7, 5x8, 5x16, etc.)
+│   ├── timezones.h          # 88 global timezone POSIX strings
+│   └── README.md            # This documentation file
+├── platformio.ini           # PlatformIO build configuration
+└── .gitignore               # Git ignore rules
 ```
-- Centered large time display
-- Maximum visibility
-- Seconds shown in small font
 
-### Mode 2: Time + Date
-```
-9:24 58     ← Time with seconds (no leading zero)
-18/12/24    ← Date (DD/MM/YY)
-```
-- Time with seconds on top row (no leading zero for single-digit hours)
-- Date on bottom row
-- Format: DD/MM/YY
-- Consistent hour formatting with Mode 0
+## Differences from ESP8266 Version
 
-## Time Format
-
-### 12-Hour Mode (Default)
-- Hours: 1-12
-- Seconds always shown in all modes
-- AM/PM implied by context
-
-### 24-Hour Mode
-- Hours: 0-23
-- Seconds shown in most cases
-- **Mode 0 (Time+Temp)**: Seconds hidden when hours ≥ 10 (not enough space)
-- **Mode 1 (Large Time)**: Seconds always shown
-- **Mode 2 (Time+Date)**: Seconds always shown
-
-**Note**: When 24-hour mode is active, Mode 0 displays a notice in the web interface about seconds being hidden for times 10:00-23:59.
-
-## Configuration Options
-
-### Display Style
-
-**Default Style:**
-- Fast rendering
-- Solid square LEDs
-- Modern, clean appearance
-
-**Realistic Style:**
-- Authentic MAX7219 appearance
-- Circular LEDs with surrounds
-- Visible off LEDs (dark circles)
-- Gray plastic bezels (customizable)
-- 4-pixel gap between matrix rows
-
-### LED & Surround Colors
-
-Choose from 8 LED colors and 8 surround colors via web interface.
-
-**Popular Combinations:**
-- **Red + Dark Gray**: Classic MAX7219 look
-- **Red + Match LED Color**: Monochrome red appearance
-- **Green + Dark Gray**: High visibility
-- **Cyan + Match LED Color**: Modern cyan-on-cyan
-
-Changes apply instantly with automatic full screen refresh.
-
-### Timezone Configuration
-
-88 supported timezones including:
-- All Australian zones (Sydney, Melbourne, Brisbane, Adelaide, Perth, Darwin, Hobart)
-- US zones (EST, CST, MST, PST, Alaska, Hawaii)
-- European zones (UK, CET, EET)
-- Asian zones (Tokyo, Hong Kong, Singapore, Bangkok, Mumbai, Dubai)
-- And many more...
+| Feature | ESP8266 | ESP32 CYD |
+|---------|---------|-----------|
+| WiFi Library | ESP8266WiFi.h | WiFi.h |
+| Web Server | ESP8266WebServer.h | WebServer.h |
+| TFT Pins | External wiring | Built-in (HSPI) |
+| Display Size | 320×240 | 320×240 (same) |
+| Backlight | D8 | GPIO 21 |
+| I2C SDA | D4 | GPIO 27 |
+| I2C SCL | D3 | GPIO 22 |
+| LED Size | 10px | 10px (optimized for 32×16 matrix) |
+| RGB LED | None | Built-in (GPIO 4, 16, 17) |
+| Boot Button | None | GPIO 0 (WiFi reset feature) |
+| Time Config | configTime() | configTzTime() (ESP32-specific) |
+| Loop Delay | 100ms | 1ms (faster, more responsive) |
+| WiFi Monitor | No | Yes (every 10s with auto-reconnect) |
+| IP Display | No | Yes (shown on TFT at startup) |
+| Diagnostics | Basic | Comprehensive (Serial + Network) |
 
 ## Troubleshooting
 
-### Display Issues
-
-**Display is blank:**
-- Check TFT connections (CS, DC, RST, MOSI, SCK)
-- Verify correct display type is selected (#define)
-- Check TFT power supply (3.3V)
-- Check rotation setting: `tft.setRotation(3)` (landscape)
-
-**Display shows garbage:**
-- Wrong display type selected
-- SPI pins connected incorrectly
+### Display is blank
+- Check User_Setup.h is properly configured
+- Verify backlight pin (GPIO 21) is set HIGH
 - Try different rotation values (0-3)
 
-**LEDs look wrong:**
-- Try switching display styles via web interface
-- Adjust LED colors via web interface
-- Check realistic display settings in code
+### Colors are wrong (red/blue swapped)
+- Uncomment `#define TFT_RGB_ORDER TFT_BGR` in User_Setup.h
 
-**Display too dim/bright:**
-- TFT backlight is controlled via D8 (always on after boot)
-- Can hardwire backlight to 3.3V if D8 control is not needed
-- For PWM brightness control, modify LED_PIN code to use analogWrite()
+### Display shows artifacts
+- Reduce SPI frequency to 27000000
+- Check for loose connections
 
-**Colors don't change/refresh slowly:**
-- Should be instant with latest code
-- Check serial monitor for "Forced full screen clear" message
-- Verify `forceFullRedraw` flag is working
+### WiFi won't connect
+- **Method 1**: Hold BOOT button for 3 seconds during power-up to reset WiFi
+- **Method 2**: Access `/reset` endpoint in web interface
+- **Method 3**: Open Serial Monitor (115200 baud) to see connection diagnostics
+- Check router isn't using client isolation
+- Verify firewall isn't blocking port 80
 
-**Colon blinks with display shift:**
-- Should be fixed in latest code
-- Uses 2-pixel space reservation when colon hidden
-- Verify consistent spacing in displayTimeAndTemp/displayTimeAndDate
+### Web server not accessible
+- Check Serial Monitor for IP address and WiFi status
+- Verify device shows "WiFi Mode: STA" in diagnostics
+- Ensure your computer is on the same WiFi network
+- Try accessing from different device/browser
+- Check router firewall settings
 
-### Sensor Issues
+### Sensor not detected
+- Verify I2C wiring to GPIO 27 (SDA) and GPIO 22 (SCL)
+- Check sensor address (0x76 or 0x77)
+- Ensure 3.3V power is connected (not 5V)
 
-**BME280 not detected:**
-- Check I2C connections (SDA=D4, SCL=D3)
-- Verify I2C address (0x76 or 0x77)
-- Try other address in code: `bme280.begin(0x77)`
-- Check I2C pullup resistors (may be required)
-
-### WiFi Issues
-
-**Won't connect to WiFi:**
-- Use Reset WiFi button in web interface
-- Connect to "TFT_Clock_Setup" AP and reconfigure
-- Check WiFi credentials are correct
-- Ensure 2.4GHz network (ESP8266 doesn't support 5GHz)
-
-**Web interface not accessible:**
-- Check ESP8266 IP address in serial monitor
-- Verify ESP8266 and computer on same network
-- Try accessing directly by IP: `http://192.168.x.x`
-
-### Time Issues
-
-**Time not syncing:**
-- Check WiFi connection
-- Verify firewall allows NTP (port 123 UDP)
-- Try different NTP server in code
-- Check timezone selection
-
-**Wrong timezone:**
-- Select correct timezone in web interface
-- Verify POSIX TZ string is correct
-- Check DST settings for your region
-
-**Seconds not showing:**
-- **Mode 0 (Time+Temp)**: Hidden in 24-hour mode when hours ≥ 10
-- **Mode 1 (Large Time)**: Should always show
-- **Mode 2 (Time+Date)**: Should always show
-- Try 12-hour format for consistent seconds display
-
-## Serial Debug Output
-
-Connect to serial monitor (115200 baud) to see:
-
-```
-╔═══════════════════════════════════════╗
-║   ESP8266 TFT Matrix Clock v2.0       ║
-║   TFT Display Edition - Enhanced      ║
-╚═══════════════════════════════════════╝
-
-Initializing TFT Display...
-TFT Display initialized: 320x240
-LED Matrix area: 320x164 (with 4px row gap)
-Display Mode: Realistic (circular LEDs)
-BME280 OK: 22.5°C, 45.3%
-Connected! IP: 192.168.1.100
-Syncing time with NTP...
-Time synced: 14:23:45 17/12/2025 (TZ: Sydney, Australia)
-Web server started
-
-Time: 14:23 | Date: 18/12/2024 | Temp: 23°C | Hum: 45% | Pressure: 1013 hPa
-```
-
-## Advanced Configuration
-
-### Custom LED Appearance
-
-Adjust LED rendering in `main_tft.cpp`:
-
-```cpp
-// LED size (10 pixels = 32 LEDs across 320px screen)
-#define LED_SIZE 10
-
-// Default style (0=blocks, 1=realistic)
-#define DEFAULT_DISPLAY_STYLE 1
-
-// Row gap (4 pixels matches real MAX7219)
-int matrixGap = (y >= 8) ? 4 : 0;
-
-// Circle radii (in drawLEDPixel function) - optimized for visibility
-if (distSq <= 18) {      // Inner core (bright)
-if (distSq <= 38) {      // LED body (bright)
-if (distSq <= 62) {      // Surround ring (full brightness, no dimming)
-```
-
-### Adjust Color Dimming
-
-In `dimRGB565()` function:
-```cpp
-// Dimming factors:
-dimRGB565(color, 0) = 100% brightness
-dimRGB565(color, 1) = 50% brightness  (for secondary elements)
-dimRGB565(color, 7) = 12.5% brightness (used for off LEDs)
-
-// Note: Surrounds now use full brightness for better visibility
-```
-
-### Display Rotation
-
-Adjust display orientation:
-
-```cpp
-// In initTFT() function:
-tft.setRotation(0);  // Portrait
-tft.setRotation(1);  // Landscape
-tft.setRotation(2);  // Portrait inverted
-tft.setRotation(3);  // Landscape inverted (default)
-```
-
-## API Endpoints
-
-The web server provides these endpoints:
-
-### GET /
-Main web interface with all controls
-
-### GET /style
-Toggle display style and colors:
-- `mode=toggle` - Switch between Default/Realistic
-- `ledcolor=0-7` - Set LED color (0=Red, 1=Green, etc.)
-- `surroundcolor=0-7` - Set surround color (7=Match LED Color)
-
-### GET /timeformat
-Toggle time format:
-- `mode=toggle` - Switch between 12/24 hour format
-
-### GET /temperature
-Toggle temperature unit:
-- `mode=toggle` - Switch between °C/°F
-
-### GET /timezone
-Change timezone:
-- `tz=0-87` - Set timezone index
-
-### GET /reset
-Reset WiFi settings and restart
-
-## Performance Notes
-
-- **Refresh Rate**: 
-  - Default style: ~50 FPS (20ms updates)
-  - Realistic style: ~3 FPS (300-400ms updates)
-- **Fast Refresh**: Only changed pixels are redrawn
-- **Color Changes**: Instant refresh (forceFullRedraw mechanism)
-- **Power Consumption**:
-  - Active: ~250mA @ 5V (display always on)
-- **WiFi**: 2.4GHz only (ESP8266 limitation)
-- **Memory**: ~40KB RAM used, ~40KB free
-
-## Changelog
-
-### Version 2.1 (18-19 December 2025)
-
-#### TFT_eSPI Library Migration
-- ⚡ **Migrated to TFT_eSPI Library**
-  - Replaced Adafruit_GFX/Adafruit_ILI9341 with hardware-optimized TFT_eSPI
-  - Configured 40MHz SPI bus speed for faster display updates
-  - Created custom User_Setup.h for ESP8266 D1 Mini Pro configuration
-  - Updated pin assignments: TFT_CS=D1, TFT_DC=D2, TFT_RST=-1
-  - Better performance and active maintenance
-
-#### Major Web Interface Overhaul
-- 🎨 **Complete UI Redesign**
-  - Modern dark theme with gradient cards and glowing effects
-  - Large live-updating digital clock (auto-refreshes every second)
-  - Clock respects 12/24 hour format (shows AM/PM in 12-hour mode)
-  - No page reload needed for time updates
-  - Professional gradient backgrounds and shadows
-
-- 📱 **Fully Responsive Design**
-  - Mobile-first approach with touch-friendly controls
-  - Fluid typography using CSS clamp() for all screen sizes
-  - Adaptive grid layouts for phones, tablets, and desktops
-  - Breakpoints: Mobile (<768px), Tablet (769-1024px), Desktop (>1024px)
-
-- 🌡️ **Dynamic Environment Display**
-  - Temperature-based weather icons (7 levels):
-    * 🔥 Hot (≥30°C), ☀️ Warm (25-29°C), 🌤️ Pleasant (20-24°C)
-    * ⛅ Mild (15-19°C), ☁️ Cool (10-14°C), 🌧️ Cold (5-9°C), ❄️ Freezing (<5°C)
-  - Dynamic humidity icons: 💦 (high), 💧 (normal), 🏜️ (low)
-  - Color-coded sensor values with glowing effects
-  - Responsive card grid with hover animations
-
-- 🎯 **Enhanced LED Rendering**
-  - Fixed surround color visibility (now properly visible and configurable)
-  - Wider, brighter surround ring for better color distinction
-  - Removed excessive dimming for clearer color differentiation
-  - Full 10x10 pixel LED area utilization
-
-#### Display Mode Improvements
-- ⏰ **Consistent Hour Formatting**
-  - Mode 2 (Time+Date) now removes leading zero from single-digit hours
-  - Matches Mode 0 behavior for uniform appearance
-  - Works correctly in both 12-hour and 24-hour formats
-
-#### Performance & UX Improvements
-- ⚡ Live time updates via JavaScript fetch API
-- ⚡ Instant visual feedback on all setting changes
-- 🎨 Smooth hover effects and transitions
-- 📐 Centered layouts with max-width containers
-- 📊 **Enhanced Serial Output**
-  - Added pressure (hPa) to status output
-  - Removed redundant sensor debug output
-  - Cleaner, more informative logging
-
-### Version 2.0 (early December 2025)
-
-#### Major Features Added
-- ✅ **Realistic LED Display Style**
-  - Circular LEDs with customizable surround colors
-  - Authentic MAX7219 appearance
-  - Visible off LEDs (dark circles)
-  - 4-pixel gap between matrix rows
-  - Proper RGB565 color dimming that preserves hue
-
-- ✅ **12/24 Hour Format Toggle**
-  - Web interface toggle
-  - Smart seconds handling (hidden in 24h mode when space limited)
-  - All display modes respect time format preference
-
-- ✅ **Enhanced Color System**
-  - 8 LED colors (Red, Green, Blue, Yellow, Cyan, Magenta, White, Orange)
-  - 8 surround colors (including "Match LED Color" option)
-  - Instant color changes with forced screen refresh
-
-- ✅ **Seconds Display**
-  - All three modes now show seconds
-  - Small font (digits3x5) for space efficiency
-  - Smart hiding when space constrained (24h Mode 0 only)
-
-#### Performance Improvements
-- ⚡ 6-8× faster rendering vs original (300-400ms vs 2-3 seconds)
-- ⚡ Instant style/color changes (forceFullRedraw flag)
-- ⚡ Optimized off LED rendering (fillRect vs 100 drawPixel calls)
-- ⚡ Smart FAST_REFRESH cache clearing
-
-#### Bug Fixes
-- 🐛 Fixed colon blinking causing display shift
-- 🐛 Fixed "Match LED Color" not syncing when LED color changes
-- 🐛 Fixed seconds being cut off in large time mode
-- 🐛 Fixed bit-shift color dimming (now preserves hue properly)
-- 🐛 Fixed slow refresh on style/color changes
-
-#### Code Cleanup
-- 🧹 Removed all PIR motion sensor code (not used in TFT version)
-- 🧹 Removed all LDR light sensor code (not used in TFT version)
-- 🧹 Removed computeAmbientBrightnessFromLdr function
-- 🧹 Simplified handleDisplayControl (was handleBrightnessAndMotion)
-- 🧹 Cleaned up serial output (removed motion/light level)
-- 🧹 Removed unnecessary display status output
-
-#### Web Interface Updates
-- 🌐 Added Display Style card with color selectors
-- 🌐 Added 12/24 hour format toggle in Timezone section
-- 🌐 Simplified Settings card (removed display toggle)
-- 🌐 Added warning for 24-hour mode seconds limitation
-- 🌐 Instant refresh on all style/color changes
-
-### Version 1.0 (November 2025)
-- Initial TFT refactor from LED matrix version
-- Basic LED simulation with solid blocks
-- Web interface for configuration
-- BME280 sensor support
-- NTP time sync with 88 timezones
-- Three display modes
-
-## Future Enhancements
-
-- [ ] Weather API integration
-- [ ] OTA firmware updates  
-- [ ] Additional display animations
-- [ ] Custom font support
-- [ ] MQTT integration
-- [ ] Alarm functionality
-- [ ] Multiple timezone clocks
-- [ ] Adjustable LED glow/bloom effects
-
-## Credits
-
-- Original LED Matrix version by Anthony Clarke
-- TFT refactor and enhancements by Anthony Clarke
-- Realistic LED rendering inspired by real MAX7219 hardware
-- Based on MAX7219 concepts by Pawel A. Hernik
-- Font data & code / idea from original LED matrix project by https://www.youtube.com/@cbm80amiga
+### Device keeps restarting
+- Check Serial Monitor for error messages
+- Verify stable power supply (ESP32 needs good 5V/1A minimum)
+- WiFi credentials may be incorrect - reset WiFi config
 
 ## License
 
-MIT License - Feel free to modify and share!
+MIT License - See LICENSE file for details
 
-## Support
+## Credits
 
-For issues, questions, or contributions:
-- Open an issue on GitHub
-- Check the troubleshooting section above
-- Review serial debug output for diagnostics
-- Consult the changelog for recent changes
-
----
-
-**Enjoy your realistic TFT LED Matrix Clock!** 🎨⏰✨
+- Original LED Matrix Clock by Anthony Clarke (AJC & Co)
+- CYD Community: [ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display)
+- TFT_eSPI Library by Bodmer
