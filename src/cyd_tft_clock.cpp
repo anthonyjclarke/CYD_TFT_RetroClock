@@ -4,8 +4,21 @@
  * Board: ESP32-2432S028R (Cheap Yellow Display)
  * Display: Built-in 2.8" ILI9341 320x240 TFT
  *
- * This version is refactored from the ESP8266 TFT LED Matrix Clock
- * to run on the ESP32 Cheap Yellow Display (CYD) board.
+ * ======================== ACKNOWLEDGEMENTS ========================
+ * This project is based on the original ESP8266 TFT LED Matrix Clock
+ * created by @cbm80amiga (Pawel A.)
+ * Original project: https://www.youtube.com/watch?v=2wJOdi0xzas
+ * Code: https://drive.google.com/drive/folders/1dfWRP2fgwyA4KJZyiFvkcBOC8FUKdx53 
+ * Author's GitHub: https://github.com/cbm80amiga
+ * 
+ * Then updated to include WiFiManager, NTP sync, I2C sensor support
+ * https://github.com/anthonyjclarke/ESP_LEDMatrix_32x16_NTP_Clock
+ * This has been deprecated in favor of this ESP32 CYD version.
+ * 
+ * ======================== PROJECT DESCRIPTION ========================
+ * This version has been significantly refactored and enhanced to run
+ * on the ESP32 Cheap Yellow Display (CYD) board with additional features
+ * including WiFiManager, multiple sensor support, web interface, and more.
  *
  * ======================== WiFi CONFIGURATION ========================
  * Three ways to reset/configure WiFi:
@@ -35,27 +48,11 @@
  *    - BLUE: Connecting to WiFi
  *    - PURPLE: Config portal active (AP mode)
  *    - GREEN: WiFi connected successfully
- *
- * ======================== CHANGELOG ========================
- * 28th December 2025 - Version 3.0 (CYD Port):
- *   - Complete refactor from ESP8266 to ESP32 CYD board
- *   - Changed WiFi libraries to ESP32 variants
- *   - Updated pin definitions for CYD hardware
- *   - Added RGB LED support (GPIO 4, 16, 17)
- *   - Updated I2C pins for CYD extended GPIO connector
- *   - Maintained all original functionality and web interface
- *   - Updated TFT_eSPI configuration for CYD pinout
- *   - Larger display (320x240) allows better LED matrix simulation
- *
- * Previous Version History:
- * 19th December 2025 - Version 2.2:
- *   - Added TFT Display Mirror feature on web page
- *   - Canvas-based LED matrix rendering in browser
- *
- * 18th December 2025 - Version 2.1:
- *   - Fixed Mode 2 (Time+Date) leading zero removal
- *   - Redesigned web interface with modern dark theme
- *   - Added dynamic temperature/humidity icons
+ * 
+ * * ======================== To Do ========================
+ *   - Add support for additional display modes
+ *   - Implement more advanced time zone handling
+ *   - Add external weather API support
  *
  * ======================== FEATURES ========================
  * - Simulates 4x2 MAX7219 LED matrix appearance on TFT display
@@ -79,12 +76,26 @@
 
 #include "Arduino.h"
 
+// ======================== SENSOR CONFIGURATION ========================
+// Choose your sensor type by uncommenting ONE of the following:
+// #define USE_BME280        // BME280: Temperature, Humidity, Pressure sensor
+// #define USE_SHT3X      // SHT3X: Temperature and Humidity sensor (no pressure)
+#define USE_HTU21D     // HTU21D: Temperature and Humidity sensor (no pressure)
+
 // ======================== LIBRARIES ========================
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
 #include <Wire.h>
-#include <Adafruit_BME280.h>
+#ifdef USE_BME280
+  #include <Adafruit_BME280.h>
+#endif
+#ifdef USE_SHT3X
+  #include <Adafruit_SHT31.h>
+#endif
+#ifdef USE_HTU21D
+  #include <Adafruit_HTU21DF.h>
+#endif
 #include <time.h>
 #include <TFT_eSPI.h>  // Hardware-specific library with optimized performance
 #include <DNSServer.h> // Required for WiFiManager on ESP32
@@ -102,7 +113,7 @@
 #define LED_G_PIN     16    // Green LED
 #define LED_B_PIN     17    // Blue LED
 
-// I2C for BME280 sensor (using extended GPIO connector CN1)
+// I2C for sensor (using extended GPIO connector CN1)
 #define SDA_PIN       27    // I2C Data
 #define SCL_PIN       22    // I2C Clock
 
@@ -120,19 +131,21 @@
 #define TOTAL_HEIGHT      16     // Total height: 16 pixels (2 rows of 8)
 
 // CYD has a 320x240 display - LED size must fit 32 pixels across 320px width
-#define LED_SIZE          10      // Size of each simulated LED pixel (10 * 32 = 320px, fits in 320)
-#define LED_SPACING       1      // No spacing between LEDs
+// These are now variables that can be changed via web interface
+// NOTE: Reducing ledSize allows more content to fit on screen (e.g., full seconds in 24-hour mode)
+//       Smaller LED sizes (4-8px) prevent truncation; larger sizes (10-12px) may clip seconds
+int ledSize = 9;            // Size of each simulated LED pixel (default: 9 * 32 = 288px)
+int ledSpacing = 1;         // Spacing between LEDs (default: 1, reduce to 0 for tighter spacing)
 
 // Color definitions (RGB565 format)
 #define LED_COLOR         0xF800 // Red color for LEDs
 #define BG_COLOR          0x0000 // Black background
 #define LED_OFF_COLOR     0x2000 // Dim red for "off" LEDs
 
-// Calculate display dimensions for centering
-// When LED_SPACING = 0: LED_SIZE * count
+// Calculate display dimensions for centering (now calculated dynamically based on ledSize)
 // Plus 4-pixel gap between the two matrix rows (authentic spacing)
-#define DISPLAY_WIDTH     (LED_SIZE * TOTAL_WIDTH)   // 288 pixels (fits in 320)
-#define DISPLAY_HEIGHT    (LED_SIZE * TOTAL_HEIGHT + 4)  // 148 pixels (fits in 240)
+int getDisplayWidth() { return ledSize * TOTAL_WIDTH; }
+int getDisplayHeight() { return ledSize * TOTAL_HEIGHT + 4; }
 
 // ======================== DISPLAY STYLE CONFIGURATION ========================
 #define DEFAULT_DISPLAY_STYLE 1  // Start with realistic style
@@ -153,7 +166,7 @@
 // ======================== TIMING CONFIGURATION ========================
 #define SENSOR_UPDATE_INTERVAL       60000  // Update sensor every 60s
 #define NTP_SYNC_INTERVAL            3600000 // Sync NTP every hour
-#define STATUS_PRINT_INTERVAL        10000  // Print status every 10s
+#define STATUS_PRINT_INTERVAL        60000  // Print status every 60s
 
 // ======================== DEBUG CONFIGURATION ========================
 #define DEBUG_ENABLED 1
@@ -164,8 +177,10 @@
 
 #if DEBUG_ENABLED
   #define DEBUG(x) x
+  #define DEBUG_SETTINGS(x) if(settingsChanged) { x; settingsChanged = false; }
 #else
   #define DEBUG(x)
+  #define DEBUG_SETTINGS(x)
 #endif
 
 // ======================== DISPLAY OBJECT ========================
@@ -178,7 +193,17 @@ byte scr[LINE_WIDTH * DISPLAY_ROWS]; // 32 columns × 2 rows = 64 bytes
 // ======================== GLOBAL OBJECTS ========================
 WebServer server(80);
 WiFiManager wifiManager;
-Adafruit_BME280 bme280;
+
+// Sensor objects (only one will be initialized based on configuration)
+#ifdef USE_BME280
+  Adafruit_BME280 bme280;
+#endif
+#ifdef USE_SHT3X
+  Adafruit_SHT31 sht3x = Adafruit_SHT31();
+#endif
+#ifdef USE_HTU21D
+  Adafruit_HTU21DF htu21d = Adafruit_HTU21DF();
+#endif
 
 // ======================== FONT INCLUDES ========================
 #include "fonts.h"
@@ -190,6 +215,7 @@ int hours24 = 0;  // 24-hour format
 int day = 1, month = 1, year = 2025;
 int lastSecond = -1;
 bool use24HourFormat = false;  // Default to 12-hour format
+bool showLeadingZero = false;  // Default: no leading zero for hours < 10
 
 // ======================== SENSOR VARIABLES ========================
 bool sensorAvailable = false;
@@ -197,6 +223,7 @@ int temperature = 0;
 int humidity = 0;
 int pressure = 0;
 bool useFahrenheit = false;
+const char* sensorType = "NONE";  // Will be set based on detected sensor
 
 // ======================== TIMING VARIABLES ========================
 unsigned long lastSensorUpdate = 0;
@@ -210,11 +237,13 @@ uint16_t ledSurroundColor = COLOR_DARK_GRAY; // Dark gray for authentic MAX7219 
 uint16_t ledOffColor = 0x2000;             // Color for unlit LEDs (dim)
 bool surroundMatchesLED = false;           // Track if surround should match LED color
 bool forceFullRedraw = false;              // Flag to force immediate complete redraw
+bool settingsChanged = false;              // Flag to trigger detailed debug output
 
 // ======================== DISPLAY MODES ========================
 int currentMode = 0; // 0=Time+Temp, 1=Time Large, 2=Time+Date
 unsigned long lastModeSwitch = 0;
-#define MODE_SWITCH_INTERVAL 5000
+#define MODE_SWITCH_INTERVAL 5000  // Default interval (not used directly)
+int modeSwitchInterval = 5;  // Mode switch interval in seconds (default: 5, range: 1-60)
 
 // ======================== TIMEZONE ========================
 int currentTimezone = 0;
@@ -262,12 +291,14 @@ void initTFT() {
   // Calculate display dimensions
   int displayWidth = tft.width();
   int displayHeight = tft.height();
-  int offsetX = ((displayWidth - DISPLAY_WIDTH) / 2) > 0 ? ((displayWidth - DISPLAY_WIDTH) / 2) : 0;
-  int offsetY = ((displayHeight - DISPLAY_HEIGHT) / 2) > 0 ? ((displayHeight - DISPLAY_HEIGHT) / 2) : 0;
-  
+  int matrixWidth = getDisplayWidth();
+  int matrixHeight = getDisplayHeight();
+  int offsetX = ((displayWidth - matrixWidth) / 2) > 0 ? ((displayWidth - matrixWidth) / 2) : 0;
+  int offsetY = ((displayHeight - matrixHeight) / 2) > 0 ? ((displayHeight - matrixHeight) / 2) : 0;
+
   DEBUG(Serial.printf("TFT Display initialized: %dx%d\n", displayWidth, displayHeight));
-  DEBUG(Serial.printf("LED Matrix area: %dx%d at offset (%d,%d)\n", 
-        DISPLAY_WIDTH, DISPLAY_HEIGHT, offsetX, offsetY));
+  DEBUG(Serial.printf("LED Matrix area: %dx%d at offset (%d,%d)\n",
+        matrixWidth, matrixHeight, offsetX, offsetY));
   
   if (displayWidth <= 0 || displayHeight <= 0) {
     DEBUG(Serial.println("ERROR: Invalid TFT dimensions!"));
@@ -306,40 +337,42 @@ void drawLEDPixel(int x, int y, bool lit) {
   }
   
   // Calculate screen position with centering offset
-  int offsetX = ((tft.width() - DISPLAY_WIDTH) / 2) > 0 ? ((tft.width() - DISPLAY_WIDTH) / 2) : 0;
-  int offsetY = ((tft.height() - DISPLAY_HEIGHT) / 2) > 0 ? ((tft.height() - DISPLAY_HEIGHT) / 2) : 0;
-  
+  int displayWidth = getDisplayWidth();
+  int displayHeight = getDisplayHeight();
+  int offsetX = ((tft.width() - displayWidth) / 2) > 0 ? ((tft.width() - displayWidth) / 2) : 0;
+  int offsetY = ((tft.height() - displayHeight) / 2) > 0 ? ((tft.height() - displayHeight) / 2) : 0;
+
   // Add extra gap between matrix rows (after row 7, before row 8)
   int matrixGap = (y >= 8) ? 4 : 0;  // 4-pixel gap between matrix rows
-  
-  int screenX = offsetX + x * LED_SIZE;
-  int screenY = offsetY + y * LED_SIZE + matrixGap;
+
+  int screenX = offsetX + x * ledSize;
+  int screenY = offsetY + y * ledSize + matrixGap;
   
   if (displayStyle == 0) {
     // ========== DEFAULT STYLE: Solid square blocks ==========
     uint16_t color = lit ? ledOnColor : BG_COLOR;
-    tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, color);
-  } 
+    tft.fillRect(screenX, screenY, ledSize, ledSize, color);
+  }
   else {
     // ========== REALISTIC STYLE: Circular LED with surround ==========
-    int center = LED_SIZE / 2;
-    int ledRadius = (LED_SIZE - 2) / 2;  // Leave 1px border
-    
+    int center = ledSize / 2;
+    int ledRadius = (ledSize - 2) / 2;  // Leave 1px border
+
     if (!lit) {
       // OFF LED: Show dark circle
-      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, BG_COLOR);
-      
+      tft.fillRect(screenX, screenY, ledSize, ledSize, BG_COLOR);
+
       uint16_t offHousing = dimRGB565(ledSurroundColor, 7);
       uint16_t offLED = 0x1800;  // Very dark red
-      
-      for (int py = 1; py < LED_SIZE - 1; py++) {
-        for (int px = 1; px < LED_SIZE - 1; px++) {
-          int dx = (px * 2 - LED_SIZE + 1);
-          int dy = (py * 2 - LED_SIZE + 1);
+
+      for (int py = 1; py < ledSize - 1; py++) {
+        for (int px = 1; px < ledSize - 1; px++) {
+          int dx = (px * 2 - ledSize + 1);
+          int dy = (py * 2 - ledSize + 1);
           int distSq = dx * dx + dy * dy;
-          int threshInner = (LED_SIZE - 4) * (LED_SIZE - 4);
-          int threshOuter = (LED_SIZE - 2) * (LED_SIZE - 2);
-          
+          int threshInner = (ledSize - 4) * (ledSize - 4);
+          int threshOuter = (ledSize - 2) * (ledSize - 2);
+
           if (distSq <= threshInner) {
             tft.drawPixel(screenX + px, screenY + py, offLED);
           }
@@ -351,18 +384,18 @@ void drawLEDPixel(int x, int y, bool lit) {
     }
     else {
       // LIT LED: Draw bright circular LED with surround
-      tft.fillRect(screenX, screenY, LED_SIZE, LED_SIZE, ledSurroundColor);
+      tft.fillRect(screenX, screenY, ledSize, ledSize, ledSurroundColor);
 
-      for (int py = 0; py < LED_SIZE; py++) {
-        for (int px = 0; px < LED_SIZE; px++) {
-          int dx = (px * 2 - LED_SIZE + 1);
-          int dy = (py * 2 - LED_SIZE + 1);
+      for (int py = 0; py < ledSize; py++) {
+        for (int px = 0; px < ledSize; px++) {
+          int dx = (px * 2 - ledSize + 1);
+          int dy = (py * 2 - ledSize + 1);
           int distSq = dx * dx + dy * dy;
 
           uint16_t pixelColor;
-          int threshCore = (LED_SIZE - 6) * (LED_SIZE - 6);
-          int threshBody = (LED_SIZE - 2) * (LED_SIZE - 2);
-          int threshSurround = LED_SIZE * LED_SIZE;
+          int threshCore = (ledSize - 6) * (ledSize - 6);
+          int threshBody = (ledSize - 2) * (ledSize - 2);
+          int threshSurround = ledSize * ledSize;
 
           if (distSq <= threshCore) {
             pixelColor = ledOnColor;
@@ -582,47 +615,51 @@ void displayTimeAndTemp() {
   
   int x = 0;
   int displayHours = use24HourFormat ? hours24 : hours;
-  bool canShowSeconds = true;
-  
-  if (use24HourFormat && hours24 >= 10) {
-    canShowSeconds = false;
+
+  // Hours (using font3x7 to match temperature display size)
+  if (showLeadingZero) {
+    sprintf(buf, "%02d", displayHours);  // With leading zero
+  } else {
+    sprintf(buf, "%d", displayHours);    // No leading zero
   }
-  
-  // Hours
-  sprintf(buf, "%d", displayHours);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    x += drawCharWithY(x, 0, *p, font3x7);
     if (*(p+1)) x++;
   }
-  
-  // Colon
+
+  // Colon - Mode 0: flashing colon (one LED space before)
+  x++;  // Space before colon
   if (showDots) {
-    x += drawCharWithY(x, 0, ':', digits5x8rn);
-    x += 1;
+    x += drawCharWithY(x, 0, ':', font3x7);
+    x++;  // Space after colon
   } else {
-    x += 2;
+    x += 2;  // When colon hidden, maintain spacing
   }
-  
-  // Minutes
+
+  // Minutes (using font3x7 to match temperature display size)
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
-    x += drawCharWithY(x, 0, *p, digits5x8rn);
+    x += drawCharWithY(x, 0, *p, font3x7);
     if (*(p+1)) x++;
   }
   
-  // Seconds
-  if (canShowSeconds) {
-    x++;
-    sprintf(buf, "%02d", seconds);
-    if (x + 7 <= LINE_WIDTH) {
-      for (const char* p = buf; *p; p++) {
-        if (x < LINE_WIDTH - 3) {
-          x += drawCharWithY(x, 0, *p, digits3x5);
-          if (*(p+1) && x < LINE_WIDTH) x++;
-        }
+  // AM/PM indicator (only in 12-hour mode)
+  // In 12-hour mode, display AM or PM
+  // In 24-hour mode, nothing is displayed after minutes
+
+  if (!use24HourFormat) {
+    // Display AM or PM in 12-hour mode
+    const char* ampm = (hours24 >= 12) ? "PM" : "AM";
+
+    x++;  // Space before AM/PM
+    for (const char* p = ampm; *p; p++) {
+      if (x < LINE_WIDTH) {
+        x += drawCharWithY(x, 0, *p, font3x7);
+        if (*(p+1) && x < LINE_WIDTH) x++;
       }
     }
   }
+  // Note: Seconds are not displayed in Mode 0
   
   // Bottom row: Temperature and Humidity
   x = 0;
@@ -649,36 +686,44 @@ void displayTimeLarge() {
   bool showDots = (seconds % 2) == 0;
   
   int displayHours = use24HourFormat ? hours24 : hours;
-  int x = (displayHours > 9) ? 0 : 3;
-  
+  int x = (displayHours > 9 || showLeadingZero) ? 0 : 3;
+
   // Draw hours
-  sprintf(buf, "%d", displayHours);
+  if (showLeadingZero) {
+    sprintf(buf, "%02d", displayHours);  // With leading zero
+  } else {
+    sprintf(buf, "%d", displayHours);    // No leading zero
+  }
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x16rn);
     if (*(p+1)) x++;
   }
-  
-  // Draw colon
+
+  // Draw colon - Mode 1: one LED space before and after the colon
+  x++;  // Space before colon
   if (showDots) {
     x += drawCharWithY(x, 0, ':', digits5x16rn);
+    x++;  // Space after colon
   } else {
-    x += 1;
+    x += 2;  // When colon is not shown, still maintain spacing
   }
-  
+
   // Draw minutes
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x16rn);
     if (*(p+1)) x++;
   }
-  
+
   // Add seconds in small font
+  // Note: May be truncated in 24-hour mode with hours >= 10 at larger LED sizes
+  // Users can adjust LED Size or Spacing via web interface to fit all elements
   x++;
   sprintf(buf, "%02d", seconds);
   for (const char* p = buf; *p; p++) {
-    if (x < LINE_WIDTH - 3) {
+    if (x < LINE_WIDTH) {
       x += drawCharWithY(x, 0, *p, font3x7);
-      if (*(p+1) && x < LINE_WIDTH - 3) x++;
+      if (*(p+1) && x < LINE_WIDTH) x++;
     }
   }
 }
@@ -690,35 +735,43 @@ void displayTimeAndDate() {
   bool showDots = (seconds % 2) == 0;
   
   int displayHours = use24HourFormat ? hours24 : hours;
-  
+
   // Top row: Time
   int x = 0;
-  sprintf(buf, "%d", displayHours);
+  if (showLeadingZero) {
+    sprintf(buf, "%02d", displayHours);  // With leading zero
+  } else {
+    sprintf(buf, "%d", displayHours);    // No leading zero
+  }
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
     if (*(p+1)) x++;
   }
-  
+
+  // Colon - Mode 2: one LED space before the colon
+  x++;  // Space before colon
   if (showDots) {
     x += drawCharWithY(x, 0, ':', digits5x8rn);
     x += 1;
   } else {
     x += 2;
   }
-  
+
   sprintf(buf, "%02d", minutes);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 0, *p, digits5x8rn);
     if (*(p+1)) x++;
   }
-  
+
   // Add seconds
+  // Note: May be truncated in 24-hour mode with hours >= 10 at larger LED sizes
+  // Users can adjust LED Size or Spacing via web interface to fit all elements
   x++;
   sprintf(buf, "%02d", seconds);
   for (const char* p = buf; *p; p++) {
-    if (x < LINE_WIDTH - 3) {
+    if (x < LINE_WIDTH) {
       x += drawCharWithY(x, 0, *p, digits3x5);
-      if (*(p+1) && x < LINE_WIDTH - 3) x++;
+      if (*(p+1) && x < LINE_WIDTH) x++;
     }
   }
   
@@ -734,7 +787,9 @@ void displayTimeAndDate() {
 
 bool testSensor() {
   Wire.begin(SDA_PIN, SCL_PIN);
-  
+
+#ifdef USE_BME280
+  // Test BME280 sensor
   if (!bme280.begin(0x76, &Wire)) {
     DEBUG(Serial.println("BME280 sensor not found at 0x76"));
     if (!bme280.begin(0x77, &Wire)) {
@@ -742,41 +797,112 @@ bool testSensor() {
       return false;
     }
   }
-  
+
   bme280.setSampling(Adafruit_BME280::MODE_FORCED,
                      Adafruit_BME280::SAMPLING_X1,
                      Adafruit_BME280::SAMPLING_X1,
                      Adafruit_BME280::SAMPLING_X1,
                      Adafruit_BME280::FILTER_OFF);
-  
+
   float temp = bme280.readTemperature();
   float hum = bme280.readHumidity();
-  
+
   if (isnan(temp) || isnan(hum) || temp < -50 || temp > 100 || hum < 0 || hum > 100) {
     DEBUG(Serial.println("BME280 readings invalid"));
     return false;
   }
-  
+
   DEBUG(Serial.printf("BME280 OK: %.1f°C, %.1f%%\n", temp, hum));
+  sensorType = "BME280";
   return true;
+
+#elif defined(USE_SHT3X)
+  // Test SHT3X sensor
+  if (!sht3x.begin(0x44)) {  // Default I2C address for SHT3X
+    DEBUG(Serial.println("SHT3X sensor not found at 0x44"));
+    if (!sht3x.begin(0x45)) {  // Alternative I2C address
+      DEBUG(Serial.println("SHT3X sensor not found at 0x45 either"));
+      return false;
+    }
+  }
+
+  // Read initial values to verify sensor is working
+  float temp = sht3x.readTemperature();
+  float hum = sht3x.readHumidity();
+
+  if (isnan(temp) || isnan(hum) || temp < -50 || temp > 100 || hum < 0 || hum > 100) {
+    DEBUG(Serial.println("SHT3X readings invalid"));
+    return false;
+  }
+
+  DEBUG(Serial.printf("SHT3X OK: %.1f°C, %.1f%%\n", temp, hum));
+  sensorType = "SHT3X";
+  return true;
+
+#elif defined(USE_HTU21D)
+  // Test HTU21D sensor
+  if (!htu21d.begin()) {  // HTU21D uses fixed I2C address 0x40
+    DEBUG(Serial.println("HTU21D sensor not found at 0x40"));
+    return false;
+  }
+
+  // Read initial values to verify sensor is working
+  float temp = htu21d.readTemperature();
+  float hum = htu21d.readHumidity();
+
+  if (isnan(temp) || isnan(hum) || temp < -50 || temp > 100 || hum < 0 || hum > 100) {
+    DEBUG(Serial.println("HTU21D readings invalid"));
+    return false;
+  }
+
+  DEBUG(Serial.printf("HTU21D OK: %.1f°C, %.1f%%\n", temp, hum));
+  sensorType = "HTU21D";
+  return true;
+
+#else
+  DEBUG(Serial.println("No sensor type defined in configuration"));
+  return false;
+#endif
 }
 
 void updateSensorData() {
   if (!sensorAvailable) return;
-  
+
+  float temp = NAN;
+  float hum = NAN;
+  float pres = NAN;
+
+#ifdef USE_BME280
+  // Read BME280 sensor
   bme280.takeForcedMeasurement();
-  float temp = bme280.readTemperature();
-  float hum = bme280.readHumidity();
-  float pres = bme280.readPressure() / 100.0F;
-  
+  temp = bme280.readTemperature();
+  hum = bme280.readHumidity();
+  pres = bme280.readPressure() / 100.0F;
+
+#elif defined(USE_SHT3X)
+  // Read SHT3X sensor
+  temp = sht3x.readTemperature();
+  hum = sht3x.readHumidity();
+  // SHT3X doesn't have a pressure sensor, so pressure remains NAN
+
+#elif defined(USE_HTU21D)
+  // Read HTU21D sensor
+  temp = htu21d.readTemperature();
+  hum = htu21d.readHumidity();
+  // HTU21D doesn't have a pressure sensor, so pressure remains NAN
+#endif
+
+  // Update temperature if valid
   if (!isnan(temp) && temp >= -50 && temp <= 100) {
     temperature = (int)round(temp);
   }
-  
+
+  // Update humidity if valid
   if (!isnan(hum) && hum >= 0 && hum <= 100) {
     humidity = (int)round(hum);
   }
-  
+
+  // Update pressure if valid (only for BME280)
   if (!isnan(pres) && pres >= 800 && pres <= 1200) {
     pressure = (int)round(pres);
   }
@@ -844,7 +970,37 @@ void updateTime() {
   
   if (seconds != lastSecond) {
     lastSecond = seconds;
-    DEBUG(Serial.printf("Display update - Mode: %d, Time: %02d:%02d:%02d\n", currentMode, hours24, minutes, seconds));
+
+    // Show what's being displayed in current mode
+    if (currentMode == 0) {
+      // Mode 0: Time + Temp
+      if (!use24HourFormat) {
+        int displayHours = hours24 % 12;
+        if (displayHours == 0) displayHours = 12;
+        const char* ampm = (hours24 >= 12) ? "PM" : "AM";
+        DEBUG(Serial.printf("Mode 0: %d:%02d %s | Temp: %d°%c Hum: %d%%\n",
+          displayHours, minutes, ampm,
+          useFahrenheit ? (temperature * 9 / 5 + 32) : temperature,
+          useFahrenheit ? 'F' : 'C',
+          humidity));
+      } else {
+        DEBUG(Serial.printf("Mode 0: %02d:%02d | Temp: %d°%c Hum: %d%%\n",
+          hours24, minutes,
+          useFahrenheit ? (temperature * 9 / 5 + 32) : temperature,
+          useFahrenheit ? 'F' : 'C',
+          humidity));
+      }
+    } else if (currentMode == 1) {
+      // Mode 1: Large Time
+      int displayHours = use24HourFormat ? hours24 : hours;
+      DEBUG(Serial.printf("Mode 1: %02d:%02d:%02d (Large)\n", displayHours, minutes, seconds));
+    } else if (currentMode == 2) {
+      // Mode 2: Time + Date
+      int displayHours = use24HourFormat ? hours24 : hours;
+      DEBUG(Serial.printf("Mode 2: %02d:%02d:%02d | %02d/%02d/%04d\n",
+        displayHours, minutes, seconds, day, month, year));
+    }
+
     switch (currentMode) {
       case 0: displayTimeAndTemp(); break;
       case 1: displayTimeLarge(); break;
@@ -852,9 +1008,9 @@ void updateTime() {
     }
     refreshAll();
   }
-  
-  // Auto-switch modes
-  if (millis() - lastModeSwitch > MODE_SWITCH_INTERVAL) {
+
+  // Auto-switch modes (using user-configurable interval)
+  if (millis() - lastModeSwitch > (modeSwitchInterval * 1000)) {
     currentMode = (currentMode + 1) % 3;
     lastModeSwitch = millis();
   }
@@ -871,40 +1027,49 @@ void setupWebServer() {
     html += "<title>CYD LED Clock</title>";
     html += "<style>";
     html += "*{box-sizing:border-box;}";
-    html += "body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:15px;background:#1a1a1a;color:#fff;max-width:1200px;margin:0 auto;}";
-    html += ".header{text-align:center;margin-bottom:20px;}";
-    html += "h1{color:#fff;font-size:clamp(20px,5vw,28px);font-weight:600;margin:0 0 30px 0;}";
-    html += ".time-display{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(20px,5vw,40px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;}";
-    html += ".time-display h2{color:#aaa;font-size:clamp(16px,4vw,20px);font-weight:400;margin:0 0 15px 0;text-align:left;}";
-    html += ".clock{font-size:clamp(48px,15vw,120px);font-weight:700;text-align:center;margin:15px 0;font-family:'Courier New',monospace;color:#7CFC00;text-shadow:0 0 30px rgba(124,252,0,0.5);line-height:1.1;}";
-    html += ".date{font-size:clamp(24px,7vw,48px);font-weight:600;text-align:center;margin:15px 0;font-family:'Courier New',monospace;color:#4A90E2;text-shadow:0 0 20px rgba(74,144,226,0.5);line-height:1.2;}";
-    html += ".environment{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(20px,4vw,40px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;}";
-    html += ".environment p{margin:10px 0;}";
-    html += ".env-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:clamp(15px,3vw,30px);text-align:center;}";
-    html += ".env-item{padding:clamp(15px,3vw,20px);background:rgba(255,255,255,0.05);border-radius:10px;transition:transform 0.2s;}";
-    html += ".env-item:hover{transform:translateY(-5px);background:rgba(255,255,255,0.08);}";
-    html += ".env-icon{font-size:clamp(40px,10vw,60px);margin-bottom:8px;display:block;}";
-    html += ".env-value{font-size:clamp(24px,6vw,36px);font-weight:700;margin:8px 0;font-family:'Courier New',monospace;line-height:1.2;}";
-    html += ".env-label{font-size:clamp(12px,3vw,16px);color:#aaa;text-transform:uppercase;letter-spacing:1px;}";
-    html += ".card{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,3vw,20px);margin:10px 0;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.3);}";
-    html += "h2{color:#aaa;border-bottom:2px solid #4CAF50;padding-bottom:5px;font-size:clamp(16px,4vw,18px);font-weight:500;margin-top:0;}";
-    html += "button{background:#4CAF50;color:white;border:none;padding:10px 15px;cursor:pointer;border-radius:5px;margin:5px;font-size:clamp(12px,3vw,14px);white-space:nowrap;}";
+    html += "body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:10px;background:#1a1a1a;color:#fff;max-width:1200px;margin:0 auto;}";
+    html += ".header{text-align:center;margin-bottom:12px;}";
+    html += "h1{color:#fff;font-size:clamp(20px,5vw,26px);font-weight:600;margin:0 0 15px 0;}";
+    html += ".time-display{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,4vw,25px);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.3);margin-bottom:12px;}";
+    html += ".time-display h2{color:#aaa;font-size:clamp(14px,4vw,18px);font-weight:400;margin:0 0 10px 0;text-align:left;}";
+    html += ".clock{font-size:clamp(40px,12vw,90px);font-weight:700;text-align:center;margin:10px 0;font-family:'Courier New',monospace;color:#7CFC00;text-shadow:0 0 20px rgba(124,252,0,0.5);line-height:1.1;}";
+    html += ".date{font-size:clamp(20px,6vw,38px);font-weight:600;text-align:center;margin:10px 0;font-family:'Courier New',monospace;color:#4A90E2;text-shadow:0 0 15px rgba(74,144,226,0.5);line-height:1.2;}";
+    html += ".environment{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,3vw,25px);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.3);margin-bottom:12px;}";
+    html += ".environment p{margin:6px 0;}";
+    html += ".env-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:clamp(12px,3vw,20px);text-align:center;}";
+    html += ".env-item{padding:clamp(12px,3vw,16px);background:rgba(255,255,255,0.05);border-radius:8px;transition:transform 0.2s;}";
+    html += ".env-item:hover{transform:translateY(-3px);background:rgba(255,255,255,0.08);}";
+    html += ".env-icon{font-size:clamp(32px,8vw,48px);margin-bottom:6px;display:block;}";
+    html += ".env-value{font-size:clamp(20px,5vw,30px);font-weight:700;margin:6px 0;font-family:'Courier New',monospace;line-height:1.2;}";
+    html += ".env-label{font-size:clamp(11px,3vw,14px);color:#aaa;text-transform:uppercase;letter-spacing:0.5px;}";
+    html += ".card{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(12px,3vw,16px);margin:8px 0;border-radius:8px;box-shadow:0 3px 12px rgba(0,0,0,0.3);}";
+    html += "h2{color:#aaa;border-bottom:2px solid #4CAF50;padding-bottom:4px;font-size:clamp(15px,4vw,17px);font-weight:500;margin:0 0 10px 0;}";
+    html += "button{background:#4CAF50;color:white;border:none;padding:8px 12px;cursor:pointer;border-radius:5px;margin:4px 4px 4px 0;font-size:clamp(12px,3vw,13px);white-space:nowrap;}";
     html += "button:hover{background:#45a049;}";
-    html += "select{padding:8px;font-size:clamp(12px,3vw,14px);background:#1e1e1e;color:#fff;border:1px solid #444;border-radius:5px;width:100%;max-width:300px;}";
-    html += "p{color:#ccc;font-size:clamp(13px,3vw,15px);line-height:1.6;}";
+    html += "select{padding:6px;font-size:clamp(12px,3vw,13px);background:#1e1e1e;color:#fff;border:1px solid #444;border-radius:5px;width:100%;max-width:280px;}";
+    html += "p{color:#ccc;font-size:clamp(12px,3vw,14px);line-height:1.5;margin:6px 0;}";
     html += "@media(max-width:768px){";
     html += ".env-grid{grid-template-columns:1fr;}";
     html += ".clock{font-size:clamp(40px,12vw,80px);}";
     html += ".date{font-size:clamp(20px,6vw,36px);}";
-    html += "body{padding:10px;}";
-    html += ".time-display,.environment,.card{padding:15px;}";
+    html += "body{padding:8px;}";
+    html += ".time-display,.environment,.card{padding:12px;}";
     html += "}";
     // TFT Display Mirror styles
-    html += ".tft-mirror{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(15px,3vw,25px);border-radius:15px;box-shadow:0 8px 32px rgba(0,0,0,0.3);margin-bottom:20px;text-align:center;}";
-    html += ".tft-mirror h2{color:#aaa;border-bottom:2px solid #E91E63;padding-bottom:5px;font-size:clamp(16px,4vw,18px);font-weight:500;margin-top:0;text-align:left;}";
-    html += ".canvas-container{display:flex;justify-content:center;align-items:center;padding:15px;background:#000;border-radius:10px;margin-top:15px;}";
-    html += "#tftCanvas{image-rendering:pixelated;image-rendering:crisp-edges;border-radius:5px;}";
-    html += ".tft-label{color:#888;font-size:12px;margin-top:10px;}";
+    html += ".tft-mirror{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:clamp(12px,3vw,20px);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.3);margin-bottom:12px;text-align:center;}";
+    html += ".tft-mirror h2{color:#aaa;border-bottom:2px solid #E91E63;padding-bottom:4px;font-size:clamp(15px,4vw,17px);font-weight:500;margin:0 0 10px 0;text-align:left;}";
+    html += ".canvas-container{display:flex;justify-content:center;align-items:center;padding:12px;background:#000;border-radius:8px;margin-top:10px;}";
+    html += "#tftCanvas{image-rendering:pixelated;image-rendering:crisp-edges;border:2px solid #444;border-radius:4px;box-shadow:0 0 8px rgba(68,68,68,0.5);}";
+    html += ".tft-label{color:#888;font-size:11px;margin-top:8px;}";
+    html += ".footer{background:linear-gradient(135deg,#2a2a2a,#1e1e1e);padding:16px;margin:12px 0 0 0;border-radius:8px;box-shadow:0 3px 12px rgba(0,0,0,0.3);text-align:center;}";
+    html += ".footer-content{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}";
+    html += ".footer-link{color:#4CAF50;text-decoration:none;font-size:clamp(14px,3.5vw,16px);font-weight:500;transition:color 0.3s;}";
+    html += ".footer-link:hover{color:#66BB6A;}";
+    html += ".footer-separator{color:#666;font-size:clamp(14px,3.5vw,16px);}";
+    html += ".footer-heart{color:#E91E63;font-size:clamp(14px,3.5vw,16px);}";
+    html += ".footer-credit{color:#888;font-size:clamp(11px,3vw,13px);margin-top:8px;line-height:1.6;}";
+    html += ".footer-credit a{color:#4A90E2;text-decoration:none;}";
+    html += ".footer-credit a:hover{color:#6BA9E8;text-decoration:underline;}";
     html += "</style>";
     html += "<script>";
     html += "function updateTime(){";
@@ -990,6 +1155,7 @@ void setupWebServer() {
     html += "<h2>TFT Display Mirror</h2>";
     html += "<div class='canvas-container'><canvas id='tftCanvas'></canvas></div>";
     html += "<p class='tft-label'>Live display - Updates every 500ms | 32×16 LED Matrix</p>";
+    html += "<p style='color:#888;font-size:12px;margin:4px 0 0 0;'>💡 Tip: If seconds are truncated, adjust LED Size or Spacing below</p>";
     html += "</div>";
 
     if (sensorAvailable) {
@@ -1045,24 +1211,27 @@ void setupWebServer() {
       html += "<div class='env-label'>Humidity</div>";
       html += "</div>";
 
+#ifdef USE_BME280
+      // Only show pressure for BME280 sensor
       html += "<div class='env-item'>";
       html += "<span class='env-icon'>🌍</span>";
       html += "<div class='env-value' style='color:#9370DB;text-shadow:0 0 20px #9370DB44;'>" + String(pressure) + "</div>";
       html += "<div class='env-label'>Pressure (hPa)</div>";
       html += "</div>";
+#endif
 
       html += "</div></div>";
     }
-    
+
     html += "<div class='card'><h2>Settings</h2>";
-    html += "<button onclick=\"location.href='/temperature?mode=toggle'\">Toggle °C/°F</button>";
+    html += "<button onclick=\"location.href='/temperature?mode=toggle'\" style='margin:0;'>Toggle °C/°F</button>";
     html += "</div>";
     
     html += "<div class='card'><h2>Display Style</h2>";
-    html += "<p>Current Style: " + String(displayStyle == 0 ? "Default (Blocks)" : "Realistic (LEDs)") + "</p>";
-    html += "<button onclick=\"location.href='/style?mode=toggle'\">Toggle Style</button><br><br>";
-    
-    html += "<p>LED Color:</p>";
+    html += "<p style='margin:4px 0;'>Current Style: " + String(displayStyle == 0 ? "Default (Blocks)" : "Realistic (LEDs)") + "</p>";
+    html += "<button onclick=\"location.href='/style?mode=toggle'\">Toggle Style</button><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>LED Color:</p>";
     html += "<select id='ledcolor' onchange=\"location.href='/style?ledcolor='+this.value\">";
     html += "<option value='0'" + String(ledOnColor == COLOR_RED ? " selected" : "") + ">Red</option>";
     html += "<option value='1'" + String(ledOnColor == COLOR_GREEN ? " selected" : "") + ">Green</option>";
@@ -1072,9 +1241,9 @@ void setupWebServer() {
     html += "<option value='5'" + String(ledOnColor == COLOR_MAGENTA ? " selected" : "") + ">Magenta</option>";
     html += "<option value='6'" + String(ledOnColor == COLOR_WHITE ? " selected" : "") + ">White</option>";
     html += "<option value='7'" + String(ledOnColor == COLOR_ORANGE ? " selected" : "") + ">Orange</option>";
-    html += "</select><br><br>";
+    html += "</select><br>";
     
-    html += "<p>Surround Color:</p>";
+    html += "<p style='margin:8px 0 4px 0;'>Surround Color:</p>";
     html += "<select id='surroundcolor' onchange=\"location.href='/style?surroundcolor='+this.value\">";
     html += "<option value='0'" + String(ledSurroundColor == COLOR_WHITE ? " selected" : "") + ">White</option>";
     html += "<option value='1'" + String(ledSurroundColor == COLOR_LIGHT_GRAY ? " selected" : "") + ">Light Gray</option>";
@@ -1084,34 +1253,201 @@ void setupWebServer() {
     html += "<option value='5'" + String(ledSurroundColor == COLOR_BLUE ? " selected" : "") + ">Blue</option>";
     html += "<option value='6'" + String(ledSurroundColor == COLOR_YELLOW ? " selected" : "") + ">Yellow</option>";
     html += "<option value='7'" + String(ledSurroundColor == ledOnColor ? " selected" : "") + ">Match LED Color</option>";
-    html += "</select>";
+    html += "</select><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>LED Size: <span id='ledSizeValue'>" + String(ledSize) + "</span> pixels</p>";
+    html += "<input type='range' min='4' max='12' value='" + String(ledSize) + "' ";
+    html += "oninput=\"document.getElementById('ledSizeValue').textContent=this.value\" ";
+    html += "onchange=\"location.href='/style?ledsize='+this.value\" ";
+    html += "style='width:100%;'>";
+    html += "<small style='color:#888;display:block;margin:2px 0 8px 0;'>Range: 4-12 pixels (default: 9)</small>";
+
+    html += "<p style='margin:8px 0 4px 0;'>LED Spacing: <span id='ledSpacingValue'>" + String(ledSpacing) + "</span> pixels</p>";
+    html += "<input type='range' min='0' max='3' value='" + String(ledSpacing) + "' ";
+    html += "oninput=\"document.getElementById('ledSpacingValue').textContent=this.value\" ";
+    html += "onchange=\"location.href='/style?ledspacing='+this.value\" ";
+    html += "style='width:100%;'>";
+    html += "<small style='color:#888;display:block;margin:2px 0 8px 0;'>Range: 0-3 pixels (default: 1)</small>";
+
+    html += "<p style='margin:8px 0 4px 0;'>Mode Switch Interval: <span id='modeSwitchIntervalValue'>" + String(modeSwitchInterval) + "</span> seconds</p>";
+    html += "<input type='range' min='1' max='60' value='" + String(modeSwitchInterval) + "' ";
+    html += "oninput=\"document.getElementById('modeSwitchIntervalValue').textContent=this.value\" ";
+    html += "onchange=\"location.href='/modeinterval?seconds='+this.value\" ";
+    html += "style='width:100%;'>";
+    html += "<small style='color:#888;display:block;margin:2px 0;'>Range: 1-60 seconds (default: 5)</small>";
     html += "</div>";
     
     html += "<div class='card'><h2>Timezone & Time Format</h2>";
-    html += "<p>Current Timezone: " + String(timezones[currentTimezone].name) + "</p>";
-    html += "<select id='tz' onchange=\"location.href='/timezone?tz='+this.value\">";
-    for (int i = 0; i < numTimezones; i++) {
+    html += "<p style='margin:8px 0 4px 0;'>Current Timezone: " + String(timezones[currentTimezone].name) + "</p>";
+    html += "<select id='tz' onchange=\"location.href='/timezone?tz='+this.value\" style='margin-bottom:8px;'>";
+
+    // Australia & Oceania (0-11)
+    html += "<optgroup label='Australia & Oceania'>";
+    for (int i = 0; i <= 11; i++) {
       html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
       html += timezones[i].name;
       html += "</option>";
     }
-    html += "</select><br><br>";
-    
-    html += "<p>Time Format: " + String(use24HourFormat ? "24-Hour" : "12-Hour") + "</p>";
-    html += "<button onclick=\"location.href='/timeformat?mode=toggle'\">Toggle 12/24 Hour</button>";
-    if (use24HourFormat) {
-      html += "<p style='color:#666;font-size:12px;margin-top:10px;'>⚠️ Note: In Time+Temp mode, seconds not displayed when hours ≥ 10</p>";
+    html += "</optgroup>";
+
+    // North America (12-22)
+    html += "<optgroup label='North America'>";
+    for (int i = 12; i <= 22; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
     }
+    html += "</optgroup>";
+
+    // South America (23-28)
+    html += "<optgroup label='South America'>";
+    for (int i = 23; i <= 28; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Western Europe (29-39)
+    html += "<optgroup label='Western Europe'>";
+    for (int i = 29; i <= 39; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Northern Europe (40-43)
+    html += "<optgroup label='Northern Europe'>";
+    for (int i = 40; i <= 43; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Central & Eastern Europe (44-51)
+    html += "<optgroup label='Central & Eastern Europe'>";
+    for (int i = 44; i <= 51; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Middle East (52-56)
+    html += "<optgroup label='Middle East'>";
+    for (int i = 52; i <= 56; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // South Asia (57-63)
+    html += "<optgroup label='South Asia'>";
+    for (int i = 57; i <= 63; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Southeast Asia (64-70)
+    html += "<optgroup label='Southeast Asia'>";
+    for (int i = 64; i <= 70; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // East Asia (71-76)
+    html += "<optgroup label='East Asia'>";
+    for (int i = 71; i <= 76; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Central Asia (77-79)
+    html += "<optgroup label='Central Asia'>";
+    for (int i = 77; i <= 79; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Caucasus (80-82)
+    html += "<optgroup label='Caucasus'>";
+    for (int i = 80; i <= 82; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    // Africa (83-86)
+    html += "<optgroup label='Africa'>";
+    for (int i = 83; i <= 86; i++) {
+      html += "<option value='" + String(i) + "'" + (i == currentTimezone ? " selected" : "") + ">";
+      html += timezones[i].name;
+      html += "</option>";
+    }
+    html += "</optgroup>";
+
+    html += "</select><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>Time Format: " + String(use24HourFormat ? "24-Hour" : "12-Hour") + "</p>";
+    html += "<button onclick=\"location.href='/timeformat?mode=toggle'\">Toggle 12/24 Hour</button><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>Leading Zero: " + String(showLeadingZero ? "ON (01:23)" : "OFF (1:23)") + "</p>";
+    html += "<button onclick=\"location.href='/leadingzero?mode=toggle'\">Toggle Leading Zero</button>";
     html += "</div>";
     
     html += "<div class='card'><h2>System</h2>";
-    html += "<p>Board: ESP32 CYD (ESP32-2432S028R)</p>";
-    html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
-    html += "<p>Uptime: " + String(millis() / 1000) + "s</p>";
-    html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
-    html += "<button onclick=\"if(confirm('Reset WiFi?'))location.href='/reset'\">Reset WiFi</button>";
+    html += "<p style='margin:4px 0;'>Board: ESP32 CYD (ESP32-2432S028R)</p>";
+
+    // Sensor information inline
+    if (sensorAvailable) {
+      html += "<p style='margin:4px 0;'>Sensor: <strong style='color:#50C878;'>" + String(sensorType) + "</strong>";
+#ifdef USE_BME280
+      html += " (Temp/Humid/Press, 0x76/77)</p>";
+#elif defined(USE_SHT3X)
+      html += " (Temp/Humid, 0x44/45)</p>";
+#elif defined(USE_HTU21D)
+      html += " (Temp/Humid, 0x40)</p>";
+#endif
+    } else {
+      html += "<p style='margin:4px 0;'>Sensor: <span style='color:#FFA500;'>Not detected</span></p>";
+    }
+
+    html += "<p style='margin:4px 0;'>IP: " + WiFi.localIP().toString() + "</p>";
+    html += "<p style='margin:4px 0;'>Uptime: " + String(millis() / 1000) + "s</p>";
+    html += "<p style='margin:4px 0;'>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
+    html += "<button onclick=\"if(confirm('Reset WiFi?'))location.href='/reset'\" style='margin-top:8px;'>Reset WiFi</button>";
     html += "</div>";
-    
+
+    // Footer panel
+    html += "<div class='footer'>";
+    html += "<div class='footer-content'>";
+    html += "<a href='https://github.com/anthonyjclarke/cyd-tft-retroclock' target='_blank' class='footer-link'>GitHub</a>";
+    html += "<span class='footer-separator'>|</span>";
+    html += "<a href='https://bsky.app/profile/anthonyjclarke.bsky.social' target='_blank' class='footer-link'>Bluesky</a>";
+    html += "</div>";
+    html += "<div class='footer-content'>";
+    html += "<span style='color:#aaa;font-size:clamp(13px,3.5vw,15px);'>Built with</span>";
+    html += "<span class='footer-heart'>❤️</span>";
+    html += "<span style='color:#aaa;font-size:clamp(13px,3.5vw,15px);'>by Anthony Clarke</span>";
+    html += "</div>";
+    html += "<div class='footer-credit'>";
+    html += "Based on the original ESP8266 TFT LED Matrix Clock by ";
+    html += "<a href='https://www.youtube.com/watch?v=2wJOdi0xzas&t=32s' target='_blank'>@cbm80amiga</a>";
+    html += "</div>";
+    html += "</div>";
+
     html += "</body></html>";
     server.send(200, "text/html", html);
   });
@@ -1143,22 +1479,53 @@ void setupWebServer() {
   server.on("/temperature", []() {
     if (server.hasArg("mode") && server.arg("mode") == "toggle") {
       useFahrenheit = !useFahrenheit;
-      DEBUG(Serial.printf("Temperature unit changed to: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
+      settingsChanged = true;
+      DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nTemperature unit: %s\n", useFahrenheit ? "Fahrenheit" : "Celsius"));
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
-  
+
   // Time format toggle
   server.on("/timeformat", []() {
     if (server.hasArg("mode") && server.arg("mode") == "toggle") {
       use24HourFormat = !use24HourFormat;
-      DEBUG(Serial.printf("Time format changed to: %s\n", use24HourFormat ? "24-hour" : "12-hour"));
+      settingsChanged = true;
+      DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nTime format: %s\nLeading zero: %s\n",
+        use24HourFormat ? "24-hour" : "12-hour",
+        showLeadingZero ? "ON" : "OFF"));
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
-  
+
+  // Leading zero toggle
+  server.on("/leadingzero", []() {
+    if (server.hasArg("mode") && server.arg("mode") == "toggle") {
+      showLeadingZero = !showLeadingZero;
+      settingsChanged = true;
+      DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nLeading zero: %s\nTime format: %s\n",
+        showLeadingZero ? "ON" : "OFF",
+        use24HourFormat ? "24-hour" : "12-hour"));
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+
+  // Mode switch interval
+  server.on("/modeinterval", []() {
+    if (server.hasArg("seconds")) {
+      int newInterval = server.arg("seconds").toInt();
+      if (newInterval >= 1 && newInterval <= 60) {
+        modeSwitchInterval = newInterval;
+        settingsChanged = true;
+        DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nMode switch interval: %d seconds\n", modeSwitchInterval));
+      }
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+
   // Timezone selection
   server.on("/timezone", []() {
     if (server.hasArg("tz")) {
@@ -1166,7 +1533,8 @@ void setupWebServer() {
       if (tz >= 0 && tz < numTimezones) {
         currentTimezone = tz;
         syncNTP();
-        DEBUG(Serial.printf("Timezone changed to: %s\n", timezones[currentTimezone].name));
+        settingsChanged = true;
+        DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nTimezone: %s\n", timezones[currentTimezone].name));
       }
     }
     server.sendHeader("Location", "/");
@@ -1176,93 +1544,122 @@ void setupWebServer() {
   // Style settings
   server.on("/style", []() {
     bool changed = false;
-    
+    String changeDetails = "=== SETTINGS CHANGED ===\n";
+
     if (server.hasArg("mode") && server.arg("mode") == "toggle") {
       displayStyle = (displayStyle + 1) % 2;
       changed = true;
-      DEBUG(Serial.printf("Display style changed to: %d (%s)\n", 
-                          displayStyle, displayStyle == 0 ? "Default" : "Realistic"));
+      changeDetails += "Display style: " + String(displayStyle == 0 ? "Default (Blocks)" : "Realistic (LEDs)") + "\n";
     }
-    
+
     if (server.hasArg("ledcolor")) {
       int colorIdx = server.arg("ledcolor").toInt();
+      String colorName;
       switch(colorIdx) {
-        case 0: ledOnColor = COLOR_RED; break;
-        case 1: ledOnColor = COLOR_GREEN; break;
-        case 2: ledOnColor = COLOR_BLUE; break;
-        case 3: ledOnColor = COLOR_YELLOW; break;
-        case 4: ledOnColor = COLOR_CYAN; break;
-        case 5: ledOnColor = COLOR_MAGENTA; break;
-        case 6: ledOnColor = COLOR_WHITE; break;
-        case 7: ledOnColor = COLOR_ORANGE; break;
-        default: ledOnColor = COLOR_RED;
+        case 0: ledOnColor = COLOR_RED; colorName = "Red"; break;
+        case 1: ledOnColor = COLOR_GREEN; colorName = "Green"; break;
+        case 2: ledOnColor = COLOR_BLUE; colorName = "Blue"; break;
+        case 3: ledOnColor = COLOR_YELLOW; colorName = "Yellow"; break;
+        case 4: ledOnColor = COLOR_CYAN; colorName = "Cyan"; break;
+        case 5: ledOnColor = COLOR_MAGENTA; colorName = "Magenta"; break;
+        case 6: ledOnColor = COLOR_WHITE; colorName = "White"; break;
+        case 7: ledOnColor = COLOR_ORANGE; colorName = "Orange"; break;
+        default: ledOnColor = COLOR_RED; colorName = "Red";
       }
       ledOffColor = ledOnColor >> 3;
-      
+
       if (surroundMatchesLED) {
         ledSurroundColor = ledOnColor;
       }
-      
+
       changed = true;
-      DEBUG(Serial.printf("LED color changed to index: %d\n", colorIdx));
+      changeDetails += "LED color: " + colorName + "\n";
     }
-    
+
     if (server.hasArg("surroundcolor")) {
       int colorIdx = server.arg("surroundcolor").toInt();
+      String colorName;
       switch(colorIdx) {
-        case 0: 
-          ledSurroundColor = COLOR_WHITE; 
-          surroundMatchesLED = false;
-          break;
-        case 1: 
-          ledSurroundColor = COLOR_LIGHT_GRAY; 
-          surroundMatchesLED = false;
-          break;
-        case 2: 
-          ledSurroundColor = COLOR_DARK_GRAY; 
-          surroundMatchesLED = false;
-          break;
-        case 3: 
-          ledSurroundColor = COLOR_RED; 
-          surroundMatchesLED = false;
-          break;
-        case 4: 
-          ledSurroundColor = COLOR_GREEN; 
-          surroundMatchesLED = false;
-          break;
-        case 5: 
-          ledSurroundColor = COLOR_BLUE; 
-          surroundMatchesLED = false;
-          break;
-        case 6: 
-          ledSurroundColor = COLOR_YELLOW; 
-          surroundMatchesLED = false;
-          break;
-        case 7: 
-          ledSurroundColor = ledOnColor;
-          surroundMatchesLED = true;
-          break;
-        default: 
+        case 0:
           ledSurroundColor = COLOR_WHITE;
           surroundMatchesLED = false;
+          colorName = "White";
+          break;
+        case 1:
+          ledSurroundColor = COLOR_LIGHT_GRAY;
+          surroundMatchesLED = false;
+          colorName = "Light Gray";
+          break;
+        case 2:
+          ledSurroundColor = COLOR_DARK_GRAY;
+          surroundMatchesLED = false;
+          colorName = "Dark Gray";
+          break;
+        case 3:
+          ledSurroundColor = COLOR_RED;
+          surroundMatchesLED = false;
+          colorName = "Red";
+          break;
+        case 4:
+          ledSurroundColor = COLOR_GREEN;
+          surroundMatchesLED = false;
+          colorName = "Green";
+          break;
+        case 5:
+          ledSurroundColor = COLOR_BLUE;
+          surroundMatchesLED = false;
+          colorName = "Blue";
+          break;
+        case 6:
+          ledSurroundColor = COLOR_YELLOW;
+          surroundMatchesLED = false;
+          colorName = "Yellow";
+          break;
+        case 7:
+          ledSurroundColor = ledOnColor;
+          surroundMatchesLED = true;
+          colorName = "Match LED";
+          break;
+        default:
+          ledSurroundColor = COLOR_WHITE;
+          surroundMatchesLED = false;
+          colorName = "White";
       }
       changed = true;
-      DEBUG(Serial.printf("Surround color changed to index: %d, match mode: %s\n", 
-                          colorIdx, surroundMatchesLED ? "ON" : "OFF"));
+      changeDetails += "Surround color: " + colorName + "\n";
     }
-    
+
+    if (server.hasArg("ledsize")) {
+      int newSize = server.arg("ledsize").toInt();
+      if (newSize >= 4 && newSize <= 12) {  // Reasonable range: 4-12 pixels
+        ledSize = newSize;
+        changed = true;
+        changeDetails += "LED size: " + String(ledSize) + "px\n";
+      }
+    }
+
+    if (server.hasArg("ledspacing")) {
+      int newSpacing = server.arg("ledspacing").toInt();
+      if (newSpacing >= 0 && newSpacing <= 3) {  // Reasonable range: 0-3 pixels
+        ledSpacing = newSpacing;
+        changed = true;
+        changeDetails += "LED spacing: " + String(ledSpacing) + "px\n";
+      }
+    }
+
     if (changed) {
+      settingsChanged = true;
+      DEBUG_SETTINGS(Serial.print(changeDetails.c_str()));
+
       tft.fillScreen(BG_COLOR);
       forceFullRedraw = true;
-      
+
       switch (currentMode) {
         case 0: displayTimeAndTemp(); break;
         case 1: displayTimeLarge(); break;
         case 2: displayTimeAndDate(); break;
       }
       refreshAll();
-
-      DEBUG(Serial.println("Style changed - immediate redraw complete"));
     }
     
     server.sendHeader("Location", "/");
@@ -1305,7 +1702,7 @@ void setup() {
   delay(1000);
   
   DEBUG(Serial.println("\n\n╔════════════════════════════════════════╗"));
-  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.0      ║"));
+  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.5      ║"));
   DEBUG(Serial.println("║   Cheap Yellow Display Edition         ║"));
   DEBUG(Serial.println("╚════════════════════════════════════════╝\n"));
 

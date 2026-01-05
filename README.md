@@ -6,6 +6,8 @@ A retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display (CY
 
 ### Board: ESP32-2432S028R (Cheap Yellow Display)
 
+![ESP32 CYD Board Reference](images/Reference_CYD.jpeg)
+
 The CYD is an affordable ESP32 development board with integrated:
 - 2.8" ILI9341 TFT display (320x240 pixels)
 - XPT2046 resistive touchscreen
@@ -30,7 +32,7 @@ The CYD is an affordable ESP32 development board with integrated:
 | Green | 16 | |
 | Blue | 17 | |
 | **Boot Button** | 0 | Built-in, active LOW |
-| **I2C (Extended GPIO)** | | For BME280 sensor |
+| **I2C (Extended GPIO)** | | For environmental sensors |
 | SDA | 27 | Via CN1 connector |
 | SCL | 22 | Via CN1 connector |
 | **Touchscreen (VSPI)** | | Not used in this project |
@@ -50,21 +52,29 @@ The CYD is an affordable ESP32 development board with integrated:
 - **Network Diagnostics**: Comprehensive WiFi monitoring and auto-reconnect
 - **IP Address Display**: Shows IP on TFT during startup (2.5 seconds)
 - **NTP Time Sync**: Automatic time synchronization with DST support
-- **88 Timezones**: Comprehensive global timezone support
-- **BME280 Sensor**: Optional temperature, humidity, and pressure readings
+- **87 Timezones**: Comprehensive global timezone support organized by region
+- **Environmental Sensors**: Support for BME280 (temp/humidity/pressure), SHT3X, or HTU21D (temp/humidity)
 - **Web Interface**: Modern responsive control panel with live display mirror
-- **Display Styles**: Default blocks or realistic circular LEDs
-- **8 LED Colors**: Red, Green, Blue, Yellow, Cyan, Magenta, White, Orange
+- **Display Customization**:
+  - Display styles: Default blocks or realistic circular LEDs
+  - 8 LED colors: Red, Green, Blue, Yellow, Cyan, Magenta, White, Orange
+  - Adjustable LED size (4-12 pixels, default: 9px)
+  - Adjustable LED spacing (0-3 pixels, default: 1px)
+  - Configurable mode switch interval (1-60 seconds, default: 5s)
+- **Time Display Options**:
+  - 12/24-hour format toggle
+  - Leading zero toggle for hours < 10
+  - Flashing colon in all modes
 - **RGB LED Status**: Visual feedback during startup and operation
-- **Serial Diagnostics**: Real-time monitoring at 115200 baud
+- **Serial Diagnostics**: Optimized real-time monitoring at 115200 baud
 
 ## Display Modes
 
-The clock cycles through three display modes every 5 seconds:
+The clock cycles through three display modes (interval configurable via web interface, default: 5 seconds):
 
-1. **Time + Temperature**: Time on top row, temp/humidity on bottom
-2. **Large Time**: Full 16-pixel tall time display
-3. **Time + Date**: Time on top, date on bottom
+1. **Mode 0 - Time + Temperature**: Time with flashing colon (and AM/PM in 12-hour mode) on top row, temp/humidity on bottom. Seconds are not displayed in this mode.
+2. **Mode 1 - Large Time**: Full 16-pixel tall time display with flashing colon and seconds in small font
+3. **Mode 2 - Time + Date**: Time with flashing colon and seconds on top row, date (DD/MM/YY) on bottom
 
 ## Startup Sequence
 
@@ -102,11 +112,14 @@ The TFT display shows the following messages during boot:
 2. Install required libraries:
    - TFT_eSPI by Bodmer
    - WiFiManager by tzapu
-   - Adafruit BME280 Library
+   - Adafruit BME280 Library (if using BME280 sensor)
+   - Adafruit SHT31 Library (if using SHT3X sensor)
+   - Adafruit HTU21DF Library (if using HTU21D sensor)
    - Adafruit Unified Sensor
 3. Copy `User_Setup.h` to your TFT_eSPI library folder (replace existing)
 4. Open `cyd_tft_clock.cpp` and rename to `cyd_tft_clock.ino`
-5. Compile and upload
+5. Configure your sensor type (see Sensor Configuration section)
+6. Compile and upload
 
 ## WiFi Configuration
 
@@ -140,21 +153,30 @@ The TFT display shows the following messages during boot:
 Once connected, access the web interface at the clock's IP address (displayed on startup):
 
 - **Live Clock Display**: Real-time time and date
-- **TFT Display Mirror**: Canvas-based simulation of the LED matrix
-- **Environment Data**: Temperature, humidity, pressure (if sensor connected)
+- **TFT Display Mirror**: Canvas-based simulation of the LED matrix with live updates
+- **Environment Data**: Temperature, humidity, pressure (if BME280 sensor connected)
 - **Settings**:
-  - Toggle °C/°F
+  - Toggle °C/°F temperature units
   - Toggle 12/24 hour format
-  - Change timezone (88 options)
-  - Change display style
-  - Change LED color
-  - Change surround color
+  - Toggle leading zero for hours < 10
+  - Select timezone (87 global options organized by region)
+- **Display Customization**:
+  - Toggle display style (Blocks/Realistic LEDs)
+  - Choose LED color (8 options)
+  - Choose surround color (8 options including "Match LED")
+  - Adjust LED size (4-12 pixels)
+  - Adjust LED spacing (0-3 pixels)
+  - Set mode switch interval (1-60 seconds)
 - **System Information**:
-  - Board model
+  - Board model (ESP32 CYD)
+  - Sensor type and status
   - IP address
   - Uptime
   - Free heap memory
   - WiFi reset button
+- **Footer**:
+  - Links to GitHub repository and Bluesky profile
+  - Attribution and credits
 
 ## Serial Monitor Diagnostics
 
@@ -169,11 +191,20 @@ Connect at 115200 baud to see detailed diagnostics:
 - NTP sync results
 - Web server startup confirmation
 
-### Runtime Monitoring (every 10 seconds):
+### Runtime Monitoring (every 60 seconds):
 - Current time and date
 - Temperature and humidity
 - Free heap memory
 - **WiFi status**: Connection state, IP address, signal strength (RSSI)
+
+### Mode-Specific Output (every second):
+- **Mode 0**: Displays time, AM/PM (if 12-hour), temperature, and humidity
+- **Mode 1**: Displays large time with seconds
+- **Mode 2**: Displays time with seconds and date
+
+### Settings Changes (on-demand):
+- Detailed output shown only when user modifies settings via web interface
+- Includes: temperature units, time format, leading zero, timezone, display style, LED colors, LED size/spacing, mode switch interval
 
 ### Network Diagnostics:
 The Serial Monitor displays complete network information on connection:
@@ -188,18 +219,63 @@ Signal Strength (RSSI): -45 dBm
 WiFi Mode: STA
 ```
 
-## Connecting a BME280 Sensor
+## Sensor Configuration
+
+### Choosing Your Sensor
+
+The project supports three types of environmental sensors. You must configure which sensor you're using before compiling.
+
+#### Option 1: BME280 (Temperature, Humidity, and Pressure)
+- Measures temperature, relative humidity, and barometric pressure
+- I2C addresses: 0x76 or 0x77 (auto-detected)
+- Perfect for weather monitoring with pressure data
+
+#### Option 2: SHT3X (Temperature and Humidity)
+- Measures temperature and relative humidity (no pressure)
+- I2C addresses: 0x44 or 0x45 (auto-detected)
+- More accurate temperature/humidity readings than BME280
+
+#### Option 3: HTU21D (Temperature and Humidity)
+- Measures temperature and relative humidity (no pressure)
+- I2C address: 0x40 (fixed)
+- Reliable and widely available sensor
+
+### Configuring the Sensor Type
+
+Edit [src/cyd_tft_clock.cpp](src/cyd_tft_clock.cpp) around line 84:
+
+```cpp
+// Choose your sensor type by uncommenting ONE of the following:
+#define USE_BME280        // BME280: Temperature, Humidity, Pressure sensor
+// #define USE_SHT3X      // SHT3X: Temperature and Humidity sensor (no pressure)
+// #define USE_HTU21D     // HTU21D: Temperature and Humidity sensor (no pressure)
+```
+
+**For BME280**: Leave `#define USE_BME280` uncommented (default)
+**For SHT3X**: Comment out BME280 and uncomment `#define USE_SHT3X`
+**For HTU21D**: Comment out BME280 and uncomment `#define USE_HTU21D`
+
+### Connecting the Sensor
 
 Connect to the extended GPIO connector (CN1):
 
-| BME280 | CYD Pin |
-|--------|---------|
-| VCC | 3.3V |
-| GND | GND |
-| SDA | GPIO 27 |
-| SCL | GPIO 22 |
+| Sensor Pin | CYD Pin | Notes |
+|------------|---------|-------|
+| VCC | 3.3V | **Important: Use 3.3V, NOT 5V** |
+| GND | GND | Ground |
+| SDA | GPIO 27 | I2C Data |
+| SCL | GPIO 22 | I2C Clock |
 
-The sensor auto-detects at addresses 0x76 or 0x77.
+**Important Notes:**
+- All sensors use the same I2C pins (GPIO 27 and 22)
+- Only connect **one sensor at a time**
+- Always use **3.3V power** - 5V may damage the sensors
+- The device operates normally without a sensor (displays "NO SENSOR")
+- Sensor type is shown in the web interface
+- **Sensor I2C Addresses:**
+  - BME280: 0x76 or 0x77 (auto-detected)
+  - SHT3X: 0x44 or 0x45 (auto-detected)
+  - HTU21D: 0x40 (fixed address)
 
 ## RGB LED Status Indicators
 
@@ -231,9 +307,12 @@ CYD_TFT_RetroClock/
 ├── include/
 │   ├── User_Setup.h         # TFT_eSPI display configuration for CYD
 │   ├── fonts.h              # LED matrix font definitions (3x7, 5x8, 5x16, etc.)
-│   ├── timezones.h          # 88 global timezone POSIX strings
-│   └── README.md            # This documentation file
+│   └── timezones.h          # 88 global timezone POSIX strings
+├── images/
+│   └── Reference_CYD.jpeg   # ESP32 CYD board hardware reference image
 ├── platformio.ini           # PlatformIO build configuration
+├── CHANGELOG.md             # Project changelog
+├── README.md                # This documentation file
 └── .gitignore               # Git ignore rules
 ```
 
@@ -248,7 +327,7 @@ CYD_TFT_RetroClock/
 | Backlight | D8 | GPIO 21 |
 | I2C SDA | D4 | GPIO 27 |
 | I2C SCL | D3 | GPIO 22 |
-| LED Size | 10px | 10px (optimized for 32×16 matrix) |
+| LED Size | 10px | 9px default (user-adjustable 4-12px) |
 | RGB LED | None | Built-in (GPIO 4, 16, 17) |
 | Boot Button | None | GPIO 0 (WiFi reset feature) |
 | Time Config | configTime() | configTzTime() (ESP32-specific) |
@@ -287,8 +366,13 @@ CYD_TFT_RetroClock/
 
 ### Sensor not detected
 - Verify I2C wiring to GPIO 27 (SDA) and GPIO 22 (SCL)
-- Check sensor address (0x76 or 0x77)
+- Check that the correct sensor type is defined in [src/cyd_tft_clock.cpp](src/cyd_tft_clock.cpp)
+- **I2C Addresses:**
+  - BME280: 0x76 or 0x77
+  - SHT3X: 0x44 or 0x45
+  - HTU21D: 0x40
 - Ensure 3.3V power is connected (not 5V)
+- Check Serial Monitor for sensor detection messages
 
 ### Device keeps restarting
 - Check Serial Monitor for error messages
@@ -299,8 +383,25 @@ CYD_TFT_RetroClock/
 
 MIT License - See LICENSE file for details
 
-## Credits
+## Acknowledgements
 
-- Original LED Matrix Clock by Anthony Clarke (AJC & Co)
-- CYD Community: [ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display)
-- TFT_eSPI Library by Bodmer
+This project is based on the original **ESP8266 TFT LED Matrix Clock** created by **@cbm80amiga (Pawel A.)**
+
+- Original project: [YouTube Video](https://www.youtube.com/watch?v=2wJOdi0xzas)
+- Original code repository: https://drive.google.com/drive/folders/1dfWRP2fgwyA4KJZyiFvkcBOC8FUKdx53 
+
+This version has been significantly refactored and enhanced for the ESP32 Cheap Yellow Display (CYD) board with additional features including WiFiManager, multiple sensor support, comprehensive web interface, and more.
+
+### Additional Credits
+
+- **ESP32 CYD Community**: [ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display)
+- **TFT_eSPI Library**: by Bodmer
+- **WiFiManager Library**: by tzapu
+- **Adafruit Sensor Libraries**: BME280, SHT31, HTU21DF libraries
+
+### Connect
+
+- **GitHub**: [anthonyjclarke/cyd-tft-retroclock](https://github.com/anthonyjclarke/cyd-tft-retroclock)
+- **Bluesky**: [@anthonyjclarke.bsky.social](https://bsky.app/profile/anthonyjclarke.bsky.social)
+
+Built with ❤️ by Anthony Clarke
