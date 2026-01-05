@@ -1433,7 +1433,7 @@ void setupWebServer() {
     // Footer panel
     html += "<div class='footer'>";
     html += "<div class='footer-content'>";
-    html += "<a href='https://github.com/anthonyjclarke/cyd-tft-retroclock' target='_blank' class='footer-link'>GitHub</a>";
+    html += "<a href='https://github.com/anthonyjclarke/CYD_TFT_RetroClock' target='_blank' class='footer-link'>GitHub</a>";
     html += "<span class='footer-separator'>|</span>";
     html += "<a href='https://bsky.app/profile/anthonyjclarke.bsky.social' target='_blank' class='footer-link'>Bluesky</a>";
     html += "</div>";

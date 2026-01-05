@@ -401,7 +401,7 @@ This version has been significantly refactored and enhanced for the ESP32 Cheap 
 
 ### Connect
 
-- **GitHub**: [anthonyjclarke/cyd-tft-retroclock](https://github.com/anthonyjclarke/cyd-tft-retroclock)
+- **GitHub**: [anthonyjclarke/CYD_TFT_RetroClock](https://github.com/anthonyjclarke/CYD_TFT_RetroClock)
 - **Bluesky**: [@anthonyjclarke.bsky.social](https://bsky.app/profile/anthonyjclarke.bsky.social)
 
 Built with ❤️ by Anthony Clarke
