@@ -20,14 +20,25 @@ After this initial upload, all future updates can be done wirelessly.
 
 ## OTA Upload Methods
 
-### Method 1: Using IP Address (Recommended)
+### Method 1: Command Line (Recommended)
 
 Once your device is connected to WiFi, note its IP address from:
 - Serial monitor output
 - TFT display (shown for 2.5 seconds at startup)
 - Your router's DHCP client list
 
-Upload firmware wirelessly:
+**Update the IP address in `platformio.ini`** (line 19):
+```ini
+upload_port = 192.168.1.123  ; Change to your device's IP
+```
+
+Then upload firmware wirelessly:
+
+```bash
+pio run -t upload
+```
+
+**Alternative:** Upload without changing `platformio.ini`:
 
 ```bash
 pio run -t upload --upload-port 192.168.1.123
@@ -35,13 +46,42 @@ pio run -t upload --upload-port 192.168.1.123
 
 Replace `192.168.1.123` with your device's actual IP address.
 
-### Method 2: Using mDNS Hostname
+### Method 2: VS Code Tasks (Easy)
+
+The project includes custom VS Code tasks for convenient uploading:
+
+1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+2. Type "Tasks: Run Task"
+3. Select one of:
+   - **"PlatformIO: Upload (OTA)"** - Wireless upload using IP from `platformio.ini`
+   - **"PlatformIO: Upload (USB)"** - USB upload fallback
+
+These tasks are defined in `.vscode/tasks.json`.
+
+### Method 3: Using mDNS Hostname
 
 If your network supports mDNS (most do):
 
 ```bash
 pio run -t upload --upload-port CYD-Clock.local
 ```
+
+### ⚠️ VS Code Upload Icon Issue
+
+**IMPORTANT:** The Upload icon (→) in the VS Code PlatformIO toolbar has a known issue with OTA uploads.
+
+**Problem:** VS Code caches the last USB port used and automatically adds `--upload-port /dev/cu.usbserial-330` to the command, which overrides your OTA configuration in `platformio.ini`.
+
+**Error you'll see:**
+```
+17:13:26 [ERROR]: Host /dev/cu.usbserial-330 Not Found
+*** [upload] Error 1
+```
+
+**Workaround:** Don't use the Upload icon for OTA uploads. Instead, use:
+- **Command line:** `pio run -t upload` (fastest)
+- **VS Code task:** "PlatformIO: Upload (OTA)" (easiest)
+- **USB fallback:** Use the "PlatformIO: Upload (USB)" task or upload icon
 
 ## Upload Process
 
