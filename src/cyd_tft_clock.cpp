@@ -53,6 +53,8 @@
  *   - Add support for additional display modes
  *   - Implement more advanced time zone handling
  *   - Add external weather API support
+ *   - Make code portable to other ESP32 and TFT boards
+*    - Embed display examples in the documentation
  *
  * ======================== FEATURES ========================
  * - Simulates 4x2 MAX7219 LED matrix appearance on TFT display
@@ -233,7 +235,7 @@ unsigned long lastStatusPrint = 0;
 // ======================== DISPLAY STYLE VARIABLES ========================
 int displayStyle = DEFAULT_DISPLAY_STYLE;  // 0=Default, 1=Realistic
 uint16_t ledOnColor = COLOR_RED;           // Color for lit LEDs
-uint16_t ledSurroundColor = COLOR_DARK_GRAY; // Dark gray for authentic MAX7219 look
+uint16_t ledSurroundColor = COLOR_RED;     // Surround color (default: red)
 uint16_t ledOffColor = 0x2000;             // Color for unlit LEDs (dim)
 bool surroundMatchesLED = false;           // Track if surround should match LED color
 bool forceFullRedraw = false;              // Flag to force immediate complete redraw
