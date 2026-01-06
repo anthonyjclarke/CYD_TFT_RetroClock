@@ -50,11 +50,11 @@
  *    - GREEN: WiFi connected successfully
  * 
  * * ======================== To Do ========================
+ *   - Enable Remote upload of firmware via web interface
  *   - Add support for additional display modes
  *   - Implement more advanced time zone handling
  *   - Add external weather API support
  *   - Make code portable to other ESP32 and TFT boards
-*    - Embed display examples in the documentation
  *
  * ======================== FEATURES ========================
  * - Simulates 4x2 MAX7219 LED matrix appearance on TFT display
@@ -88,6 +88,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
+#include <ArduinoOTA.h>
 #include <Wire.h>
 #ifdef USE_BME280
   #include <Adafruit_BME280.h>
@@ -1851,6 +1852,50 @@ void setup() {
   
   // Start web server
   setupWebServer();
+
+  // Setup OTA (Over-The-Air) updates
+  ArduinoOTA.setHostname("CYD-Clock");
+  ArduinoOTA.setPassword("CYD_OTA_2024");  // Change this to a secure password
+
+  ArduinoOTA.onStart([]() {
+    String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+    DEBUG(Serial.println("OTA Update Start: " + type));
+    showMessage("OTA");
+  });
+
+  ArduinoOTA.onEnd([]() {
+    DEBUG(Serial.println("\nOTA Update Complete"));
+    showMessage("OTA OK");
+    delay(1000);
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    unsigned int percent = (progress / (total / 100));
+    DEBUG(Serial.printf("OTA Progress: %u%%\r", percent));
+    if (percent % 10 == 0) {  // Update display every 10%
+      char msg[16];
+      sprintf(msg, "OTA %d%%", percent);
+      showMessage(msg);
+    }
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    DEBUG(Serial.printf("OTA Error[%u]: ", error));
+    if (error == OTA_AUTH_ERROR) DEBUG(Serial.println("Auth Failed"));
+    else if (error == OTA_BEGIN_ERROR) DEBUG(Serial.println("Begin Failed"));
+    else if (error == OTA_CONNECT_ERROR) DEBUG(Serial.println("Connect Failed"));
+    else if (error == OTA_RECEIVE_ERROR) DEBUG(Serial.println("Receive Failed"));
+    else if (error == OTA_END_ERROR) DEBUG(Serial.println("End Failed"));
+    showMessage("OTA ERR");
+    flashRGBLed(1, 0, 0);  // Red flash for error
+    delay(2000);
+  });
+
+  ArduinoOTA.begin();
+  DEBUG(Serial.println("OTA Ready - Hostname: CYD-Clock"));
+  DEBUG(Serial.print("OTA IP Address: "));
+  DEBUG(Serial.println(WiFi.localIP()));
+
   showMessage("READY");
   delay(1000);
 
@@ -1868,6 +1913,9 @@ void setup() {
 // ======================== MAIN LOOP ========================
 
 void loop() {
+  // Handle OTA updates
+  ArduinoOTA.handle();
+
   // Handle web server clients - this is critical for ESP32
   server.handleClient();
   yield();  // Allow background tasks to run

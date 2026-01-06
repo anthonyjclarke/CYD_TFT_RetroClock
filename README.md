@@ -115,7 +115,7 @@ The TFT display shows the following messages during boot:
 3. **"WIFI"** - Connecting to WiFi
 4. **"SETUP AP"** - (If no WiFi saved) Config portal active
 5. **"WIFI OK"** - WiFi connected successfully
-6. **IP address display** - Shows "IP:192.168." (top) and "1.123" (bottom) for 2.5 seconds
+6. **IP address display** - Shows "IP:xxx.xxx." (top) and "xxx.xxx" (bottom) for 2.5 seconds
 7. **"NTP"** - Syncing time with NTP server
 8. **"TIME OK"** - Time synchronized
 9. **"READY"** - Setup complete, starting clock display
@@ -241,10 +241,10 @@ The Serial Monitor displays complete network information on connection:
 ```
 === WiFi Connected ===
 SSID: YourNetworkName
-IP Address: 192.168.1.123
-Gateway: 192.168.1.1
-Subnet Mask: 255.255.255.0
-DNS: 192.168.1.1
+IP Address: xxx.xxx.xxx.xxx
+Gateway: xxx.xxx.xxx.xxx
+Subnet Mask: xxx.xxx.xxx.xxx
+DNS: xxx.xxx.xxx.xxx
 Signal Strength (RSSI): -45 dBm
 WiFi Mode: STA
 ```
