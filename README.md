@@ -2,6 +2,36 @@
 
 A retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display (CYD) board.
 
+## 📸 Display Modes
+
+The clock cycles through three distinct display modes, each optimized for different information display:
+
+### Mode 0: Time + Temperature
+![Mode 0: Time + Temperature](images/mode0_time_temp.png)
+
+- **Top Row**: Current time in 12/24-hour format with flashing colon
+- **Bottom Row**: Temperature and humidity readings from connected sensor
+- **Features**: Shows AM/PM indicator in 12-hour mode, no seconds displayed
+- **Example**: `12:47 PM` with `T28°C H47%`
+
+### Mode 1: Large Time Display
+![Mode 1: Large Time Display](images/mode1_large_time.png)
+
+- **Display**: Large 16-pixel tall time spanning both rows
+- **Seconds**: Displayed in small font on the right
+- **Features**: Maximum visibility for time, perfect for across-the-room viewing
+- **Example**: `12:47:27` with prominent hours and minutes
+
+### Mode 2: Time + Date
+![Mode 2: Time + Date](images/mode2_time_date.png)
+
+- **Top Row**: Current time with seconds in small font
+- **Bottom Row**: Date in DD/MM/YY format
+- **Features**: Complete time and date information at a glance
+- **Example**: `12:47:32` with `06/01/26` (January 6, 2026)
+
+**Mode Switching**: The display automatically cycles through all three modes at a configurable interval (default: 5 seconds, adjustable 1-60 seconds via web interface). The flashing colon in all modes provides a visual heartbeat indicator.
+
 ## Hardware
 
 ### Board: ESP32-2432S028R (Cheap Yellow Display)
