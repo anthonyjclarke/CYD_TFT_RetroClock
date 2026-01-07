@@ -244,7 +244,7 @@ uint16_t ledOffColor = 0x2000;             // Color for unlit LEDs (dim)
 bool surroundMatchesLED = false;           // Track if surround should match LED color
 bool forceFullRedraw = false;              // Flag to force immediate complete redraw
 bool settingsChanged = false;              // Flag to trigger detailed debug output
-uint8_t displayRotation = 1;               // Display rotation: 1=normal, 3=180° flipped
+uint8_t displayRotation = 3;               // Display rotation: 1=normal, 3=180° flipped
 
 // ======================== DISPLAY MODES ========================
 int currentMode = 0; // 0=Time+Temp, 1=Time Large, 2=Time+Date
@@ -1812,7 +1812,7 @@ void setup() {
   delay(1000);
   
   DEBUG(Serial.println("\n\n╔════════════════════════════════════════╗"));
-  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.5      ║"));
+  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.6      ║"));
   DEBUG(Serial.println("║   Cheap Yellow Display Edition         ║"));
   DEBUG(Serial.println("╚════════════════════════════════════════╝\n"));
 

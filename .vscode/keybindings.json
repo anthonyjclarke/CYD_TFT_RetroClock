@@ -1,0 +1,13 @@
+[
+  {
+    "key": "cmd+u",
+    "command": "workbench.action.tasks.runTask",
+    "args": "PlatformIO: Upload (OTA)"
+  },
+  {
+    "key": "cmd+shift+b",
+    "command": "workbench.action.tasks.runTask",
+    "args": "PlatformIO: Build Only (No Upload)",
+    "when": "workspaceFolderCount != 0"
+  }
+]

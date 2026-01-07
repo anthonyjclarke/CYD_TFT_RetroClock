@@ -26,7 +26,8 @@ The clock cycles through three distinct display modes, each optimized for differ
 ![Mode 2: Time + Date](images/mode2_time_date.png)
 
 - **Top Row**: Current time with seconds in small font
-- **Bottom Row**: Date in DD/MM/YY format
+- **Bottom Row**: Date in selectable format (5 options)
+- **Date Formats**: DD/MM/YY, MM/DD/YY, YY/MM/DD, DD/MM/YYYY, MM/DD/YYYY
 - **Features**: Complete time and date information at a glance
 - **Example**: `12:47:32` with `06/01/26` (January 6, 2026)
 
@@ -91,10 +92,12 @@ The CYD is an affordable ESP32 development board with integrated:
   - Adjustable LED size (4-12 pixels, default: 9px)
   - Adjustable LED spacing (0-3 pixels, default: 1px)
   - Configurable mode switch interval (1-60 seconds, default: 5s)
+  - Display rotation flip (normal or 180° rotated)
 - **Time Display Options**:
   - 12/24-hour format toggle
   - Leading zero toggle for hours < 10
   - Flashing colon in all modes
+  - 5 date format options (DD/MM/YY, MM/DD/YY, YY/MM/DD, DD/MM/YYYY, MM/DD/YYYY)
 - **RGB LED Status**: Visual feedback during startup and operation
 - **Serial Diagnostics**: Optimized real-time monitoring at 115200 baud
 
@@ -190,6 +193,7 @@ Once connected, access the web interface at the clock's IP address (displayed on
   - Toggle 12/24 hour format
   - Toggle leading zero for hours < 10
   - Select timezone (87 global options organized by region)
+  - Select date format (5 common formats)
 - **Display Customization**:
   - Toggle display style (Blocks/Realistic LEDs)
   - Choose LED color (8 options)
@@ -197,6 +201,7 @@ Once connected, access the web interface at the clock's IP address (displayed on
   - Adjust LED size (4-12 pixels)
   - Adjust LED spacing (0-3 pixels)
   - Set mode switch interval (1-60 seconds)
+  - Flip display rotation (normal/180°)
 - **System Information**:
   - Board model (ESP32 CYD)
   - Sensor type and status

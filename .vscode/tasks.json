@@ -5,7 +5,10 @@
       "label": "PlatformIO: Upload (OTA)",
       "type": "shell",
       "command": "pio run -t upload --upload-port 192.168.1.212",
-      "group": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "presentation": {
         "echo": true,
         "reveal": "always",

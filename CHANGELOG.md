@@ -2,6 +2,48 @@
 
 All notable changes to the ESP32 CYD TFT Matrix Clock project will be documented in this file.
 
+## [3.6] - 2026-01-08
+
+### Added
+- **Date Format Selector**:
+  - 5 common date formats selectable via web interface
+  - Formats: DD/MM/YY, MM/DD/YY, YY/MM/DD, DD/MM/YYYY, MM/DD/YYYY
+  - Real-time switching without restart
+  - Displayed in Mode 2 (Time + Date)
+  - LED Size automatically adjusts based on format (9px for short, 8px for long)
+
+- **Display Rotation Control**:
+  - Flip display 180° via web interface toggle
+  - Rotation 1 (normal) vs Rotation 3 (flipped)
+  - Useful for different mounting orientations
+  - Setting persists across reboots
+
+- **VS Code Development Tools**:
+  - Custom tasks for PlatformIO workflow in [.vscode/tasks.json](.vscode/tasks.json)
+    - "PlatformIO: Upload (OTA)" - Upload via OTA to specified IP
+    - "PlatformIO: Build Only (No Upload)" - Build without uploading
+  - Keyboard shortcuts in [.vscode/keybindings.json](.vscode/keybindings.json)
+    - `Cmd+U` (macOS) - OTA Upload
+    - `Cmd+Shift+B` - Build Only
+  - Improved developer experience for PlatformIO users
+
+### Changed
+- **Default Display Rotation**: Changed from 1 (normal) to 3 (180° flipped)
+  - Users can toggle back to rotation 1 via web interface if needed
+  - Provides better default orientation for common mounting scenarios
+
+- **OTA Upload Safety**:
+  - `upload_port` now commented out in [platformio.ini](platformio.ini) by default
+  - Prevents accidental OTA uploads when USB cable is connected
+  - Users must explicitly specify target with `--upload-port` flag
+  - Clear documentation on OTA vs USB upload procedures
+  - Reduces risk of bricking device during development
+
+### Documentation
+- Added comprehensive comments in [platformio.ini](platformio.ini) explaining OTA safety measures
+- Added note in CHANGELOG about LED Size adjustment for different date formats
+- Documented Upload icon issue workaround in VS Code tasks
+
 ## [3.5] - 2026-01-06
 
 ### Added
