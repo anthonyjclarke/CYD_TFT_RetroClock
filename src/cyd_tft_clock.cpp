@@ -241,6 +241,7 @@ uint16_t ledOffColor = 0x2000;             // Color for unlit LEDs (dim)
 bool surroundMatchesLED = false;           // Track if surround should match LED color
 bool forceFullRedraw = false;              // Flag to force immediate complete redraw
 bool settingsChanged = false;              // Flag to trigger detailed debug output
+uint8_t displayRotation = 1;               // Display rotation: 1=normal, 3=180° flipped
 
 // ======================== DISPLAY MODES ========================
 int currentMode = 0; // 0=Time+Temp, 1=Time Large, 2=Time+Date
@@ -280,8 +281,8 @@ void initTFT() {
 
   // TFT_eSPI initialization
   tft.init();
-  tft.setRotation(1);  // Rotation 1 = landscape mode (320x240) - adjust if needed
-  DEBUG(Serial.printf("TFT_eSPI initialized, rotation set to 1\n"));
+  tft.setRotation(displayRotation);  // Rotation 1 = landscape mode (320x240), 3 = 180° flipped
+  DEBUG(Serial.printf("TFT_eSPI initialized, rotation set to %d\n", displayRotation));
 
   // Small delay after initialization
   delay(100);
@@ -1051,6 +1052,9 @@ void setupWebServer() {
     html += "button:hover{background:#45a049;}";
     html += "select{padding:6px;font-size:clamp(12px,3vw,13px);background:#1e1e1e;color:#fff;border:1px solid #444;border-radius:5px;width:100%;max-width:280px;}";
     html += "p{color:#ccc;font-size:clamp(12px,3vw,14px);line-height:1.5;margin:6px 0;}";
+    html += ".status-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.3px;border:1px solid #2e7d32;background:#1f3b23;color:#9CFF9C;}";
+    html += ".status-subtext{display:block;color:#aaa;font-size:12px;margin-top:4px;}";
+    html += ".note{background:rgba(255,255,255,0.04);border:1px dashed #555;padding:8px;border-radius:6px;color:#ccc;font-size:12px;margin-top:8px;line-height:1.5;}";
     html += "@media(max-width:768px){";
     html += ".env-grid{grid-template-columns:1fr;}";
     html += ".clock{font-size:clamp(40px,12vw,80px);}";
@@ -1233,6 +1237,9 @@ void setupWebServer() {
     html += "<div class='card'><h2>Display Style</h2>";
     html += "<p style='margin:4px 0;'>Current Style: " + String(displayStyle == 0 ? "Default (Blocks)" : "Realistic (LEDs)") + "</p>";
     html += "<button onclick=\"location.href='/style?mode=toggle'\">Toggle Style</button><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>Display Rotation: " + String(displayRotation == 1 ? "Normal" : "Flipped 180°") + "</p>";
+    html += "<button onclick=\"location.href='/rotation?mode=toggle'\">Flip Display</button><br>";
 
     html += "<p style='margin:8px 0 4px 0;'>LED Color:</p>";
     html += "<select id='ledcolor' onchange=\"location.href='/style?ledcolor='+this.value\">";
@@ -1427,6 +1434,11 @@ void setupWebServer() {
       html += "<p style='margin:4px 0;'>Sensor: <span style='color:#FFA500;'>Not detected</span></p>";
     }
 
+    html += "<div style='margin:6px 0;'>";
+    html += "<span class='status-pill'>OTA ENABLED</span>";
+    html += "<span class='status-subtext'>Use CYD-Clock.local or the device IP on port 3232 for wireless uploads</span>";
+    html += "</div>";
+    html += "<div class='note'>OTA uploads require the password set in code and in platformio.ini (--auth). Default is CYD_OTA_2024—update both together if you change it.</div>";
     html += "<p style='margin:4px 0;'>IP: " + WiFi.localIP().toString() + "</p>";
     html += "<p style='margin:4px 0;'>Uptime: " + String(millis() / 1000) + "s</p>";
     html += "<p style='margin:4px 0;'>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
@@ -1668,7 +1680,31 @@ void setupWebServer() {
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
-  
+
+  // Display rotation toggle
+  server.on("/rotation", []() {
+    if (server.hasArg("mode") && server.arg("mode") == "toggle") {
+      displayRotation = (displayRotation == 1) ? 3 : 1;
+      settingsChanged = true;
+      DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nDisplay rotation: %s\n",
+        displayRotation == 1 ? "Normal" : "Flipped 180°"));
+
+      // Update TFT rotation and redraw
+      tft.setRotation(displayRotation);
+      tft.fillScreen(BG_COLOR);
+      forceFullRedraw = true;
+
+      switch (currentMode) {
+        case 0: displayTimeAndTemp(); break;
+        case 1: displayTimeLarge(); break;
+        case 2: displayTimeAndDate(); break;
+      }
+      refreshAll();
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+
   // Reset WiFi
   server.on("/reset", []() {
     server.send(200, "text/html", 
