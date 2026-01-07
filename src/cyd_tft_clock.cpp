@@ -220,6 +220,9 @@ int lastSecond = -1;
 bool use24HourFormat = false;  // Default to 12-hour format
 bool showLeadingZero = false;  // Default: no leading zero for hours < 10
 
+// Date format: 0=DD/MM/YY, 1=MM/DD/YY, 2=YYYY-MM-DD, 3=DD.MM.YYYY, 4=MM.DD.YYYY
+int dateFormat = 0;
+
 // ======================== SENSOR VARIABLES ========================
 bool sensorAvailable = false;
 int temperature = 0;
@@ -418,6 +421,29 @@ void drawLEDPixel(int x, int y, bool lit) {
         }
       }
     }
+  }
+}
+
+// Format date according to selected format
+void formatDate(char* buf, size_t bufSize, int d, int m, int y) {
+  switch(dateFormat) {
+    case 0: // DD/MM/YY
+      snprintf(buf, bufSize, "%02d/%02d/%02d", d, m, y % 100);
+      break;
+    case 1: // MM/DD/YY
+      snprintf(buf, bufSize, "%02d/%02d/%02d", m, d, y % 100);
+      break;
+    case 2: // YYYY-MM-DD (ISO 8601)
+      snprintf(buf, bufSize, "%04d-%02d-%02d", y, m, d);
+      break;
+    case 3: // DD.MM.YYYY
+      snprintf(buf, bufSize, "%02d.%02d.%04d", d, m, y);
+      break;
+    case 4: // MM.DD.YYYY
+      snprintf(buf, bufSize, "%02d.%02d.%04d", m, d, y);
+      break;
+    default: // Fallback to DD/MM/YY
+      snprintf(buf, bufSize, "%02d/%02d/%02d", d, m, y % 100);
   }
 }
 
@@ -781,7 +807,7 @@ void displayTimeAndDate() {
   
   // Bottom row: Date
   x = 2;
-  sprintf(buf, "%02d/%02d/%02d", day, month, year % 100);
+  formatDate(buf, sizeof(buf), day, month, year);
   for (const char* p = buf; *p; p++) {
     x += drawCharWithY(x, 1, *p, font3x7) + 1;
   }
@@ -1079,6 +1105,15 @@ void setupWebServer() {
     html += ".footer-credit a:hover{color:#6BA9E8;text-decoration:underline;}";
     html += "</style>";
     html += "<script>";
+    html += "function formatDate(day,month,year,fmt){";
+    html += "var d=(day<10?'0':'')+day,m=(month<10?'0':'')+month,y2=(''+year).slice(-2),y4=year;";
+    html += "if(fmt===0)return d+'/'+m+'/'+y2;";
+    html += "if(fmt===1)return m+'/'+d+'/'+y2;";
+    html += "if(fmt===2)return y4+'-'+m+'-'+d;";
+    html += "if(fmt===3)return d+'.'+m+'.'+y4;";
+    html += "if(fmt===4)return m+'.'+d+'.'+y4;";
+    html += "return d+'/'+m+'/'+y2;";
+    html += "}";
     html += "function updateTime(){";
     html += "fetch('/api/time')";
     html += ".then(function(r){return r.json();})";
@@ -1092,7 +1127,7 @@ void setupWebServer() {
     html += "h=(h%12)||12;";
     html += "}";
     html += "if(clock){clock.textContent=(d.use24hour&&h<10?'0':'')+h+':'+(d.minutes<10?'0':'')+d.minutes+':'+(d.seconds<10?'0':'')+d.seconds+ampm;}";
-    html += "if(date){date.textContent=(d.day<10?'0':'')+d.day+'/'+(d.month<10?'0':'')+d.month+'/'+d.year;}";
+    html += "if(date){date.textContent=formatDate(d.day,d.month,d.year,d.dateFormat);}";
     html += "})";
     html += ".catch(function(e){console.log('Update failed:',e);});";
     html += "}";
@@ -1414,7 +1449,16 @@ void setupWebServer() {
     html += "<button onclick=\"location.href='/timeformat?mode=toggle'\">Toggle 12/24 Hour</button><br>";
 
     html += "<p style='margin:8px 0 4px 0;'>Leading Zero: " + String(showLeadingZero ? "ON (01:23)" : "OFF (1:23)") + "</p>";
-    html += "<button onclick=\"location.href='/leadingzero?mode=toggle'\">Toggle Leading Zero</button>";
+    html += "<button onclick=\"location.href='/leadingzero?mode=toggle'\">Toggle Leading Zero</button><br>";
+
+    html += "<p style='margin:8px 0 4px 0;'>Date Format:</p>";
+    html += "<select id='dateformat' onchange=\"location.href='/dateformat?format='+this.value\">";
+    html += "<option value='0'" + String(dateFormat == 0 ? " selected" : "") + ">DD/MM/YY (08/01/26)</option>";
+    html += "<option value='1'" + String(dateFormat == 1 ? " selected" : "") + ">MM/DD/YY (01/08/26)</option>";
+    html += "<option value='2'" + String(dateFormat == 2 ? " selected" : "") + ">YYYY-MM-DD (2026-01-08)</option>";
+    html += "<option value='3'" + String(dateFormat == 3 ? " selected" : "") + ">DD.MM.YYYY (08.01.2026)</option>";
+    html += "<option value='4'" + String(dateFormat == 4 ? " selected" : "") + ">MM.DD.YYYY (01.08.2026)</option>";
+    html += "</select>";
     html += "</div>";
     
     html += "<div class='card'><h2>System</h2>";
@@ -1472,7 +1516,8 @@ void setupWebServer() {
     String json = "{\"hours\":" + String(hours24) + ",\"minutes\":" + String(minutes) +
                   ",\"seconds\":" + String(seconds) + ",\"day\":" + String(day) +
                   ",\"month\":" + String(month) + ",\"year\":" + String(year) +
-                  ",\"use24hour\":" + String(use24HourFormat ? "true" : "false") + "}";
+                  ",\"use24hour\":" + String(use24HourFormat ? "true" : "false") +
+                  ",\"dateFormat\":" + String(dateFormat) + "}";
     server.send(200, "application/json", json);
   });
   
@@ -1522,6 +1567,31 @@ void setupWebServer() {
       DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nLeading zero: %s\nTime format: %s\n",
         showLeadingZero ? "ON" : "OFF",
         use24HourFormat ? "24-hour" : "12-hour"));
+    }
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  });
+
+  // Date format selector
+  server.on("/dateformat", []() {
+    if (server.hasArg("format")) {
+      int newFormat = server.arg("format").toInt();
+      if (newFormat >= 0 && newFormat <= 4) {
+        dateFormat = newFormat;
+        settingsChanged = true;
+        const char* formatNames[] = {"DD/MM/YY", "MM/DD/YY", "YYYY-MM-DD", "DD.MM.YYYY", "MM.DD.YYYY"};
+        DEBUG_SETTINGS(Serial.printf("=== SETTINGS CHANGED ===\nDate format: %s\n", formatNames[dateFormat]));
+
+        // Redraw display with new format
+        tft.fillScreen(BG_COLOR);
+        forceFullRedraw = true;
+        switch (currentMode) {
+          case 0: displayTimeAndTemp(); break;
+          case 1: displayTimeLarge(); break;
+          case 2: displayTimeAndDate(); break;
+        }
+        refreshAll();
+      }
     }
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
