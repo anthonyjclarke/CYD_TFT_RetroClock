@@ -1459,6 +1459,7 @@ void setupWebServer() {
     html += "<option value='3'" + String(dateFormat == 3 ? " selected" : "") + ">DD.MM.YYYY (08.01.2026)</option>";
     html += "<option value='4'" + String(dateFormat == 4 ? " selected" : "") + ">MM.DD.YYYY (01.08.2026)</option>";
     html += "</select>";
+    html += "<small style='color:#888;display:block;margin:2px 0 0 0;'>Note: Adjustment of LED Size may be needed for certain formats</small>";
     html += "</div>";
     
     html += "<div class='card'><h2>System</h2>";
