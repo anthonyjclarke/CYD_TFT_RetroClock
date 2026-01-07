@@ -20,43 +20,36 @@ After this initial upload, all future updates can be done wirelessly.
 
 ## OTA Upload Methods
 
-### Method 1: Command Line (Recommended)
+### Method 1: VS Code Tasks (Easiest & Safest) ⭐
+
+The project includes custom VS Code tasks that prevent accidental uploads to wrong devices:
+
+1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+2. Type "Tasks: Run Task"
+3. Select:
+   - **"PlatformIO: Upload (OTA)"** - Safe wireless upload to 192.168.1.212
+   - **"PlatformIO: Build Only (No Upload)"** - Build without uploading
+   - **"PlatformIO: Upload (USB) ⚠️ USE WITH CAUTION"** - Only for initial flash or recovery
+
+**Why this is safest:** The OTA task explicitly specifies the IP address, so you can never accidentally upload to a USB device.
+
+### Method 2: Command Line
 
 Once your device is connected to WiFi, note its IP address from:
 - Serial monitor output
 - TFT display (shown for 2.5 seconds at startup)
 - Your router's DHCP client list
+- Web interface System section
 
-**Update the IP address in `platformio.ini`** (line 19):
-```ini
-upload_port = 192.168.1.123  ; Change to your device's IP
-```
-
-Then upload firmware wirelessly:
+**SAFE method (recommended):** Always specify the IP address explicitly:
 
 ```bash
-pio run -t upload
+pio run -t upload --upload-port 192.168.1.212
 ```
 
-**Alternative:** Upload without changing `platformio.ini`:
+Replace `192.168.1.212` with your device's actual IP address.
 
-```bash
-pio run -t upload --upload-port 192.168.1.123
-```
-
-Replace `192.168.1.123` with your device's actual IP address.
-
-### Method 2: VS Code Tasks (Easy)
-
-The project includes custom VS Code tasks for convenient uploading:
-
-1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-2. Type "Tasks: Run Task"
-3. Select one of:
-   - **"PlatformIO: Upload (OTA)"** - Wireless upload using IP from `platformio.ini`
-   - **"PlatformIO: Upload (USB)"** - USB upload fallback
-
-These tasks are defined in `.vscode/tasks.json`.
+**⚠️ UNSAFE method:** Running `pio run -t upload` without specifying `--upload-port` will fail with an error, which is intentional to prevent accidental uploads. The `upload_port` is commented out in `platformio.ini` for safety.
 
 ### Method 3: Using mDNS Hostname
 
@@ -66,11 +59,25 @@ If your network supports mDNS (most do):
 pio run -t upload --upload-port CYD-Clock.local
 ```
 
+## Changing Device IP Address
+
+If your device IP changes (DHCP reassignment), update the IP in `.vscode/tasks.json`:
+
+1. Open [.vscode/tasks.json](.vscode/tasks.json)
+2. Find line 7: `"command": "pio run -t upload --upload-port 192.168.1.212"`
+3. Replace `192.168.1.212` with your new IP address
+4. Save the file
+
+**Tip:** Set a static IP or DHCP reservation for your device to avoid frequent IP changes.
+
 ### ⚠️ VS Code Upload Icon Issue
 
-**IMPORTANT:** The Upload icon (→) in the VS Code PlatformIO toolbar has a known issue with OTA uploads.
+**IMPORTANT:** The Upload icon (→) in the VS Code PlatformIO toolbar should **NEVER** be used for OTA uploads.
 
-**Problem:** VS Code caches the last USB port used and automatically adds `--upload-port /dev/cu.usbserial-330` to the command, which overrides your OTA configuration in `platformio.ini`.
+**Problem:** VS Code caches the last USB port and automatically adds `--upload-port /dev/cu.usbserial-330`, which:
+1. Overrides your OTA settings
+2. Could accidentally upload to a different USB device
+3. Fails with confusing error messages
 
 **Error you'll see:**
 ```
@@ -78,10 +85,14 @@ pio run -t upload --upload-port CYD-Clock.local
 *** [upload] Error 1
 ```
 
-**Workaround:** Don't use the Upload icon for OTA uploads. Instead, use:
-- **Command line:** `pio run -t upload` (fastest)
-- **VS Code task:** "PlatformIO: Upload (OTA)" (easiest)
-- **USB fallback:** Use the "PlatformIO: Upload (USB)" task or upload icon
+**✅ SAFE Upload Methods:**
+- **VS Code task:** "PlatformIO: Upload (OTA)" (safest - explicitly specifies IP)
+- **Command line:** `pio run -t upload --upload-port 192.168.1.212` (explicit IP)
+- **mDNS:** `pio run -t upload --upload-port CYD-Clock.local`
+
+**❌ UNSAFE Upload Methods:**
+- **Upload icon (→)** - Will try to use cached USB port
+- **`pio run -t upload`** without `--upload-port` - Will fail (intentional safety feature)
 
 ## Upload Process
 
