@@ -6,5 +6,4 @@
 .DS_Store
 
 # Claude AI development files (local only, not synced to GitHub)
-CLAUDE.md
 .claude/
