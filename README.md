@@ -26,9 +26,10 @@ The installer image is built for an HTU21D sensor. With no sensor attached the
 clock runs and shows "NO SENSOR"; for a BME280 or SHT3X, build it yourself
 (see [Sensor Configuration](#sensor-configuration)).
 
-**Upgrading from 3.6 or earlier:** 3.7.0 moves to a dual-OTA partition table
-with 1.79 MB app slots. WiFi survives, but answer **yes** to erase if the
-installer asks.
+**Upgrading from 3.6 or earlier:** those versions predate Improv, so the
+installer offers **Install** and asks about erasing. Say **no** to keep WiFi –
+3.7.0's new dual-OTA partition table keeps NVS where it was – or **yes** for a
+clean start.
 
 [installer]: https://anthonyjclarke.github.io/CYD_TFT_RetroClock/
 [releases]: https://github.com/anthonyjclarke/CYD_TFT_RetroClock/releases

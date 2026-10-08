@@ -21,8 +21,8 @@ All notable changes to the ESP32 CYD TFT Matrix Clock project will be documented
 ### Changed
 - **Partition table**: `default.csv` (1.25 MB app slots) replaced by the
   standard dual-OTA `partitions_custom.csv` (1.79 MB slots). NVS keeps its
-  offset, so WiFi survives; answer **yes** to erase if the installer asks
-  when coming from 3.6.
+  offset, so WiFi survives. A 3.6 board has no Improv, so the installer
+  offers Install with an erase prompt: say no to keep WiFi.
 - **Platform pinned** to `espressif32@6.12.0` (unpinned now resolves to
   pioarduino 3.x, which does not build this project).
 - WiFiManager AP name moved to `AP_NAME` in `config.h` (still
