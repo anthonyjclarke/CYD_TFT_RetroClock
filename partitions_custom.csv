@@ -1,0 +1,17 @@
+# CYD_TFT_RetroClock - 4MB flash, standard dual-OTA layout.
+#
+# Two 1.792MB app slots (OTA A/B) plus a 384KB data partition. Replaces
+# default.csv (1.25MB slots) as of 3.7.0. NVS stays at 0x9000, so WiFi
+# credentials survive the switch. The data partition is unused today; the
+# `spiffs` subtype name is correct even if it is ever mounted as LittleFS.
+#
+# Frozen once released: the web installer's Update writes this table without
+# an erase.
+#
+# Name,     Type, SubType,  Offset,   Size,    Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1C0000,
+app1,       app,  ota_1,    0x1D0000, 0x1C0000,
+spiffs,     data, spiffs,   0x390000, 0x60000,
+coredump,   data, coredump, 0x3F0000, 0x10000,
