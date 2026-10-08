@@ -46,7 +46,18 @@ SCL    → GPIO 22
 
 **⚠️ IMPORTANT:** Use 3.3V power, NOT 5V! 5V will damage the sensor.
 
-## 💻 Software Setup
+## ⚡ Fastest Route: Browser Installer
+
+No PlatformIO needed. In desktop Chrome, Edge or Opera, open
+**[anthonyjclarke.github.io/CYD_TFT_RetroClock](https://anthonyjclarke.github.io/CYD_TFT_RetroClock/)**,
+pick the 2.8″ CYD, click **Connect & install**, say yes to erasing a new board,
+then choose **Configure WiFi**. Skip to [First Time Setup](#-first-time-setup)
+if you'd rather use the `CYD_Clock_Setup` hotspot instead.
+
+The installer image is built for an HTU21D sensor (or none). For a BME280 or
+SHT3X, build from source as below.
+
+## 💻 Software Setup (Build from Source)
 
 ### 1. Install PlatformIO
 

@@ -2,6 +2,37 @@
 
 A retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display (CYD) board.
 
+## Install
+
+**[anthonyjclarke.github.io/CYD_TFT_RetroClock][installer]** installs the
+latest release from the browser – no PlatformIO, no drivers to build. It needs
+desktop Chrome, Edge or Opera.
+
+1. Pick your board – CYD 2.8″ (ESP32-2432S028R).
+2. Plug it in with a USB data cable, click **Connect & install** and choose its
+   port.
+3. On a new board, say yes to erasing it. When flashing finishes, choose
+   **Configure WiFi** and pick your network. (The `CYD_Clock_Setup` hotspot
+   still works as an alternative.)
+4. **Visit device** opens the clock's web page.
+
+A board already running this firmware is recognised and offered **Update**,
+which keeps its WiFi. Each [release][releases] also carries the images for
+flashing by hand. Use `*-firmware.bin` for an ArduinoOTA upload (see
+[OTA_UPLOAD.md](OTA_UPLOAD.md)). `*-merged.bin` is a clean install at `0x0`
+with esptool, and it **erases WiFi**.
+
+The installer image is built for an HTU21D sensor. With no sensor attached the
+clock runs and shows "NO SENSOR"; for a BME280 or SHT3X, build it yourself
+(see [Sensor Configuration](#sensor-configuration)).
+
+**Upgrading from 3.6 or earlier:** 3.7.0 moves to a dual-OTA partition table
+with 1.79 MB app slots. WiFi survives, but answer **yes** to erase if the
+installer asks.
+
+[installer]: https://anthonyjclarke.github.io/CYD_TFT_RetroClock/
+[releases]: https://github.com/anthonyjclarke/CYD_TFT_RetroClock/releases
+
 ## 📸 Display Modes
 
 The clock cycles through three distinct display modes, each optimized for different information display:
@@ -123,7 +154,9 @@ The TFT display shows the following messages during boot:
 8. **"TIME OK"** - Time synchronized
 9. **"READY"** - Setup complete, starting clock display
 
-## Installation
+## Building from Source
+
+The browser installer above is the easiest route. To build it yourself:
 
 ### Using PlatformIO (Recommended)
 
@@ -138,6 +171,8 @@ The TFT display shows the following messages during boot:
    ```bash
    pio device monitor
    ```
+
+Release images come only from CI on a `v*` tag. Never publish a local build.
 
 ### Using Arduino IDE
 
@@ -338,13 +373,19 @@ Connect to the extended GPIO connector (CN1):
 ```
 CYD_TFT_RetroClock/
 ├── src/
-│   └── cyd_tft_clock.cpp    # Main application code with WiFi config
+│   ├── cyd_tft_clock.cpp    # Main application code with WiFi config
+│   └── network/             # Improv-Serial (web installer WiFi setup)
 ├── include/
+│   ├── config.h             # Version, project name, AP name, Improv
 │   ├── User_Setup.h         # TFT_eSPI display configuration for CYD
 │   ├── fonts.h              # LED matrix font definitions (3x7, 5x8, 5x16, etc.)
 │   └── timezones.h          # 88 global timezone POSIX strings
 ├── images/
 │   └── Reference_CYD.jpeg   # ESP32 CYD board hardware reference image
+├── lib/ImprovWiFi/          # Vendored Improv library (parser fix)
+├── tools/merge_bin.py       # Post-build: flash parts + merged image
+├── .github/workflows/       # CI build, release and installer page
+├── partitions_custom.csv    # 4 MB dual-OTA partition table
 ├── platformio.ini           # PlatformIO build configuration
 ├── CHANGELOG.md             # Project changelog
 ├── README.md                # This documentation file

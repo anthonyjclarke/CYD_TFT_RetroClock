@@ -2,6 +2,32 @@
 
 All notable changes to the ESP32 CYD TFT Matrix Clock project will be documented in this file.
 
+## [3.7.0] Unreleased
+
+### Added
+- **Browser installer** at https://anthonyjclarke.github.io/CYD_TFT_RetroClock/
+  (ESP Web Tools): install or update from Chrome/Edge, no PlatformIO needed.
+- **Improv-Serial, always on**: the installer's **Configure WiFi** sets WiFi
+  over USB, and a board running this firmware is offered **Update**, which
+  keeps WiFi. Vendored library in `lib/ImprovWiFi/`; the WiFiManager portal
+  now runs non-blocking so Improv is served alongside it.
+- **Release workflow** (`.github/workflows/firmware.yml`, shared
+  `cyd-web-installer`): every push builds; a `v*` tag publishes
+  `*-firmware.bin`, `*-merged.bin`, `SHA256SUMS.txt` and the installer page.
+- `include/config.h` with `FIRMWARE_VERSION` and `PROJECT_NAME`; the serial
+  banner shows the version. Boot log line `Running from app0|app1`.
+- `tools/merge_bin.py` post-build script (flash parts + merged image).
+
+### Changed
+- **Partition table**: `default.csv` (1.25 MB app slots) replaced by the
+  standard dual-OTA `partitions_custom.csv` (1.79 MB slots). NVS keeps its
+  offset, so WiFi survives; answer **yes** to erase if the installer asks
+  when coming from 3.6.
+- **Platform pinned** to `espressif32@6.12.0` (unpinned now resolves to
+  pioarduino 3.x, which does not build this project).
+- WiFiManager AP name moved to `AP_NAME` in `config.h` (still
+  `CYD_Clock_Setup`).
+
 ## [3.6] - 2026-01-08
 
 ### Added

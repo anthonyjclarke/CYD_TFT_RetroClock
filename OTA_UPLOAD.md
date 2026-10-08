@@ -10,13 +10,30 @@ This guide explains how to upload firmware updates to your ESP32 CYD clock wirel
 
 ## Initial Setup (First Time Only)
 
-**You must upload OTA-enabled firmware via USB first:**
+**You must install OTA-enabled firmware over USB first.** The easiest way is
+the browser installer at
+[anthonyjclarke.github.io/CYD_TFT_RetroClock](https://anthonyjclarke.github.io/CYD_TFT_RetroClock/).
+From source:
 
 ```bash
 pio run -t upload
 ```
 
 After this initial upload, all future updates can be done wirelessly.
+
+**Release images:** each GitHub release carries `*-firmware.bin`, the app
+image for ArduinoOTA. Upload it without building with `espota.py`
+(from `~/.platformio/packages/framework-arduinoespressif32/tools/`):
+
+```bash
+python3 espota.py -i 192.168.1.212 -p 3232 -a CYD_OTA_2024 -f CYD_TFT_RetroClock-v3.7.0-esp32-cyd-firmware.bin
+```
+
+Never OTA `*-merged.bin` – it is a full-flash image for `0x0`.
+
+**After an OTA the clock runs from the second app slot (`app1`).** The serial
+log says `Running from app1`. That is normal; the browser installer's
+**Update** writes `boot_app0.bin` too, so it switches back to `app0`.
 
 ## OTA Upload Methods
 

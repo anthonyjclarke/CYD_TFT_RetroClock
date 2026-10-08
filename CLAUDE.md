@@ -18,7 +18,7 @@ Retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display. Simu
 
 ## Build Environment
 - **Framework**: Arduino for ESP32
-- **Platform**: espressif32
+- **Platform**: espressif32@6.12.0 (pinned; unpinned resolves to pioarduino 3.x and fails)
 - **IDE**: VSCode with PlatformIO extension
 - **Upload**: USB (esptool) or OTA (espota with password auth)
 - **Monitor**: 115200 baud
@@ -27,6 +27,13 @@ Retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display. Simu
   - WiFiManager (tzapu fork for ESP32)
   - Adafruit sensor libraries (BME280 v2.2.4, SHT31 v2.2.2, HTU21DF v1.0.5)
   - ArduinoOTA (OTA updates with CYD_OTA_2024 password)
+
+## Web installer and releases
+- Release images come only from CI on a `v*` tag on `main` (`.github/workflows/firmware.yml`); never publish a local build.
+- Never put `firmware-merged.bin` in a manifest – it wipes NVS (WiFi).
+- `PROJECT_NAME` (`include/config.h`) and `partitions_custom.csv` are frozen: a change turns Update into an erasing Install.
+- Improv is vendored in `lib/ImprovWiFi/` (parser fix) – never add it back to `lib_deps`.
+- `improvTick()` must run at least every ~1 s; the WiFiManager portal runs non-blocking for it. Don't add long `delay()`s to `loop()`.
 
 ## Project Structure
 ```
@@ -144,7 +151,7 @@ Uncomment ONE sensor type before compilation:
 
 ## Current State
 
-**Version**: 3.6 (2026-01-08)
+**Version**: 3.7.0 (`FIRMWARE_VERSION` in `include/config.h`)
 **Status**: Production-ready, stable
 
 ### Recent Changes (v3.6 - 2026-01-08)
