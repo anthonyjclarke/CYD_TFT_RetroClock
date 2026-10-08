@@ -7,3 +7,6 @@
 
 # Claude AI development files (local only, not synced to GitHub)
 .claude/
+
+# Local web installer site (built with local secrets - never publish)
+_site/
