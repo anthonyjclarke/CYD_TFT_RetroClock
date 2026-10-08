@@ -102,6 +102,11 @@
 #include <time.h>
 #include <TFT_eSPI.h>  // Hardware-specific library with optimized performance
 #include <DNSServer.h> // Required for WiFiManager on ESP32
+#include <esp_ota_ops.h>
+
+#include "config.h"
+#include "debug.h"
+#include "network/improv_setup.h"
 
 // ======================== PIN DEFINITIONS ========================
 // TFT Display (built-in on CYD, configured in User_Setup.h)
@@ -1809,12 +1814,17 @@ void configModeCallback(WiFiManager* myWiFiManager);
 
 void setup() {
   Serial.begin(115200);
+  // Improv-Serial answers from here on (setup portal and loop()); see
+  // src/network/improv_setup.h.
+  improvBegin();
   delay(1000);
   
   DEBUG(Serial.println("\n\n╔════════════════════════════════════════╗"));
-  DEBUG(Serial.println("║   ESP32 CYD TFT Matrix Clock v3.6      ║"));
+  DEBUG(Serial.printf("║   ESP32 CYD TFT Matrix Clock v%-9s║\n", FIRMWARE_VERSION));
   DEBUG(Serial.println("║   Cheap Yellow Display Edition         ║"));
   DEBUG(Serial.println("╚════════════════════════════════════════╝\n"));
+
+  DBG_INFO("Running from %s", esp_ota_get_running_partition()->label);
 
   // Initialize boot button
   pinMode(BOOT_BTN_PIN, INPUT_PULLUP);
@@ -1893,7 +1903,21 @@ void setup() {
   // Set LED to blue during WiFi connection
   setRGBLed(0, 0, 1);
   
-  if (!wifiManager.autoConnect("CYD_Clock_Setup")) {
+#if IMPROV_SETUP_ENABLED
+  // Non-blocking portal so Improv-Serial (web installer "Configure WiFi") is
+  // serviced alongside it. setup() still waits here until WiFi connects or
+  // the 180 s portal timeout, as before.
+  wifiManager.setConfigPortalBlocking(false);
+#endif
+  bool connected = wifiManager.autoConnect(AP_NAME);
+#if IMPROV_SETUP_ENABLED
+  while (!connected && wifiManager.getConfigPortalActive()) {
+    if (wifiManager.process()) { connected = true; break; }
+    improvTick();  // restarts once Improv credentials connect
+    delay(5);
+  }
+#endif
+  if (!connected) {
     DEBUG(Serial.println("Failed to connect, restarting..."));
     // Flash red on failure
     for (int i = 0; i < 5; i++) {
@@ -2020,6 +2044,9 @@ void setup() {
 // ======================== MAIN LOOP ========================
 
 void loop() {
+  // Web installer over USB: device info, WiFi changes. See improv_setup.h.
+  improvTick();
+
   // Handle OTA updates
   ArduinoOTA.handle();
 
@@ -2073,7 +2100,7 @@ void loop() {
 
 void configModeCallback(WiFiManager* myWiFiManager) {
   DEBUG(Serial.println("\n=== WiFi Config Mode ==="));
-  DEBUG(Serial.println("Connect to AP: CYD_Clock_Setup"));
+  DEBUG(Serial.println("Connect to AP: " AP_NAME));
   DEBUG(Serial.print("Config portal IP: "));
   DEBUG(Serial.println(WiFi.softAPIP()));
   
