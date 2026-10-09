@@ -34,6 +34,7 @@ Retro LED matrix clock simulator running on the ESP32 Cheap Yellow Display. Simu
 - `PROJECT_NAME` (`include/config.h`) and `partitions_custom.csv` are frozen: a change turns Update into an erasing Install.
 - Improv is vendored in `lib/ImprovWiFi/` (parser fix) – never add it back to `lib_deps`.
 - `improvTick()` must run at least every ~1 s; the WiFiManager portal runs non-blocking for it. Don't add long `delay()`s to `loop()`.
+- Before the next release, clear *Tests owed* in docs/WEB_INSTALLER.md (RUNBOOK 5b).
 
 ## Project Structure
 ```
