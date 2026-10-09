@@ -26,7 +26,19 @@ Release images come only from CI on a `v*` tag on `main`.
 
 ## Smoke test (RUNBOOK 5a)
 
-Pending.
+**Passed 09-10-2026** on one CYD 2.8″ (ESP32-D0WD-V3 rev 3.1, MAC
+`b0:cb:d8:da:ae:8c`), macOS Chrome, CI preview from
+[run 37911325798](https://github.com/anthonyjclarke/CYD_TFT_RetroClock/actions/runs/37911325798)
+(`3.7.0-dev`, Improv 1.0.1, no `secrets.h`).
+
+| Step                                  | Result                                   |
+|:--------------------------------------|:-----------------------------------------|
+| CI build, every env                   | Green (one env, `esp32-cyd`)             |
+| `pio run -t erase`, fresh install     | Flashed; erase answered yes              |
+| Configure WiFi (Improv)               | Joined WiFi; device `RetroClock-CBB0`    |
+| Boot log                              | `Running from app0`, no panic            |
+| NTP, web UI, ArduinoOTA               | Synced; `/` and `/api/time` 200; ready   |
+| Second Connect                        | "Connected to …" – name + 3.7.0-dev      |
 
 ---
 
