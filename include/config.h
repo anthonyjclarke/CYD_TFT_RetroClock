@@ -3,7 +3,7 @@
 // ======================== FIRMWARE IDENTITY ========================
 // Read by the web installer tooling (cyd-web-installer) and Improv-Serial.
 // FIRMWARE_VERSION is a #define so it can be pasted into string literals.
-#define FIRMWARE_VERSION "3.7.0-dev"
+#define FIRMWARE_VERSION "3.7.0"
 // Frozen: Improv firmware name and installer manifest name. Renaming it turns
 // the installer's "Update" (keeps WiFi) into "Install" (erases).
 #define PROJECT_NAME "CYD_TFT_RetroClock"

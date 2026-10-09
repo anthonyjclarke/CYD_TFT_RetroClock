@@ -2,7 +2,7 @@
 
 All notable changes to the ESP32 CYD TFT Matrix Clock project will be documented in this file.
 
-## [3.7.0] Unreleased
+## [3.7.0] 09-10-2026
 
 ### Added
 - **Browser installer** at https://anthonyjclarke.github.io/CYD_TFT_RetroClock/
