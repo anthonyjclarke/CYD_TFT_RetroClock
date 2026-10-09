@@ -18,6 +18,11 @@ All notable changes to the ESP32 CYD TFT Matrix Clock project will be documented
   banner shows the version. Boot log line `Running from app0|app1`.
 - `tools/merge_bin.py` post-build script (flash parts + merged image).
 
+### Fixed
+- Improv library synced with cyd-web-installer 1.0.1: each packet starts on a
+  new line, so serial noise on port open no longer makes Connect offer
+  Install instead of Update.
+
 ### Changed
 - **Partition table**: `default.csv` (1.25 MB app slots) replaced by the
   standard dual-OTA `partitions_custom.csv` (1.79 MB slots). NVS keeps its
